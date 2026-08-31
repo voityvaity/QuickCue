@@ -1,0 +1,8 @@
+IPHONEOS_DEPLOYMENT_TARGET = 26.0
+PRODUCT_BUNDLE_IDENTIFIER = ru.quickcue.app
+ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
+
+// No secret belongs in an xcconfig or the application bundle.
+// Remote API credentials are entered at runtime and stored in Keychain.
