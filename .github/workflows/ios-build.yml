@@ -1,0 +1,88 @@
+name: Build QuickCue iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          xcodegen generate --spec project.yml
+          xcodebuild -project QuickCue.xcodeproj -list
+
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project QuickCue.xcodeproj \
+            -scheme QuickCue \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Build for physical iPhone
+        run: |
+          set -o pipefail
+          rm -rf build-device
+
+          xcodebuild \
+            -project QuickCue.xcodeproj \
+            -scheme QuickCue \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$PWD/build-device" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$(find build-device/Build/Products/Release-iphoneos -maxdepth 1 -type d -name '*.app' | head -n 1)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "QuickCue.app was not found"
+            exit 1
+          fi
+
+          mkdir -p ipa/Payload
+          cp -R "$APP_PATH" ipa/Payload/
+          rm -rf ipa/Payload/*.app/_CodeSignature
+
+          cd ipa
+          zip -qry ../QuickCue-unsigned.ipa Payload
+          cd ..
+
+          ls -lh QuickCue-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickCue-unsigned-ipa
+          path: QuickCue-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
