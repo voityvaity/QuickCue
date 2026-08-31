@@ -30,15 +30,17 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Yandex Cloud") {
+                Section {
                     TextField("Folder ID", text: $settings.yandexFolderID)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                } header: {
+                    Text("Yandex Cloud")
                 } footer: {
                     Text("Для YandexGPT 5.1 Pro модель задаётся URI gpt://<folder-id>/yandexgpt/latest. Точное доступное имя можно изменить в карточке провайдера.")
                 }
 
-                Section("Мягкие лимиты") {
+                Section {
                     LabeledContent("Месячный бюджет") {
                         TextField("2000", value: $settings.monthlyBudgetRUB, format: .number)
                             .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 100)
@@ -47,6 +49,8 @@ struct SettingsView: View {
                     Stepper("Вопросов за сессию: \(settings.sessionQuestionLimit)", value: $settings.sessionQuestionLimit, in: 10...500, step: 10)
                     Stepper("Фото за сессию: \(settings.sessionPhotoLimit)", value: $settings.sessionPhotoLimit, in: 5...100, step: 5)
                     Stepper("Контекст: \(settings.contextMinutes) мин", value: $settings.contextMinutes, in: 1...30)
+                } header: {
+                    Text("Мягкие лимиты")
                 } footer: {
                     Text("Лимиты предупреждают, но не блокируют владельца. Стоимость остаётся оценочной, пока не настроены актуальные тарифы/серверная телеметрия.")
                 }
@@ -72,18 +76,20 @@ private struct ProviderSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Модель") {
+            Section {
                 TextField("ID модели", text: $modelName)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Сохранить ID модели") { settings.setModelName(modelName, for: provider) }
+            } header: {
+                Text("Модель")
             } footer: {
                 Text("ID моделей и доступность меняются у провайдеров. Поле вынесено в настройки, чтобы не выпускать новую сборку ради смены модели.")
             }
             Section("Доступ") {
                 Button("Открыть Keychain-настройку") { showKeyEditor = true }
             }
-            Section("Оценка расходов") {
+            Section {
                 LabeledContent("Ввод / 1 млн токенов") {
                     TextField("0", value: $inputRate, format: .number)
                         .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 110)
@@ -95,6 +101,8 @@ private struct ProviderSettingsView: View {
                     Text("₽")
                 }
                 Button("Сохранить тарифы") { settings.setRates(input: inputRate, output: outputRate, for: provider) }
+            } header: {
+                Text("Оценка расходов")
             } footer: {
                 Text("Введите актуальные тарифы провайдера в рублях. Нулевые значения означают: расходы считаются по токенам, но денежная оценка не вычисляется.")
             }
