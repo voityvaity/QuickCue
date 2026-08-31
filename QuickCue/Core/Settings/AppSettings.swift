@@ -48,12 +48,23 @@ final class AppSettings: ObservableObject {
             return custom
         }
         switch provider {
-        case .mock: "mock-fast-ru"
-        case .openAI: "gpt-5.4-mini"
-        case .deepSeek: "deepseek-v4-flash"
-        case .anthropic: "claude-sonnet-5"
-        case .xAI: "grok-4.6"
-        case .yandexGPT: "yandexgpt/latest"
+        case .mock:
+            return "mock-fast-ru"
+        
+        case .openAI:
+            return "gpt-5.4-mini"
+        
+        case .deepSeek:
+            return "deepseek-v4-flash"
+        
+        case .anthropic:
+            return "claude-sonnet-5"
+        
+        case .xAI:
+            return "grok-4.6"
+        
+        case .yandexGPT:
+            return "yandexgpt/latest"
         }
     }
 
