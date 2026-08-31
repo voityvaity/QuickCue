@@ -30,7 +30,7 @@ struct LatencyFallbackRouter: Sendable {
     func stream(
         request: AIRequest,
         primary: any AIProvider,
-        fallback: any AIProvider?,
+        fallback: (any AIProvider)?,
         fallbackDelaySeconds: Double
     ) -> AsyncThrowingStream<(ProviderKind, AIStreamEvent), Error> {
         guard let fallback, fallback.kind != primary.kind else {
