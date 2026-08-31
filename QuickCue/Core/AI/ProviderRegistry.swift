@@ -18,13 +18,39 @@ struct ProviderRegistry {
         }
 
         switch kind {
-        case .mock: MockAIProvider()
-        case .openAI: OpenAIProvider(modelName: model, credential: reader)
-        case .deepSeek: DeepSeekProvider(modelName: model, credential: reader)
-        case .anthropic: AnthropicProvider(modelName: model, credential: reader)
-        case .xAI: XAIProvider(modelName: model, credential: reader)
+        case .mock:
+            return MockAIProvider()
+
+        case .openAI:
+            return OpenAIProvider(
+                modelName: model,
+                credential: reader
+            )
+
+        case .deepSeek:
+            return DeepSeekProvider(
+                modelName: model,
+                credential: reader
+            )
+        
+        case .anthropic:
+            return AnthropicProvider(
+                modelName: model,
+                credential: reader
+            )
+        
+        case .xAI:
+            return XAIProvider(
+                modelName: model,
+                credential: reader
+            )
+        
         case .yandexGPT:
-            YandexGPTProvider(modelName: model, folderID: settings.yandexFolderID, credential: reader)
+            return YandexGPTProvider(
+                modelName: model,
+                folderID: settings.yandexFolderID,
+                credential: reader
+            )
         }
     }
 }
