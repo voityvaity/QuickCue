@@ -115,7 +115,7 @@ final class AppSettings: ObservableObject {
         if let custom = defaults.string(forKey: "\(Key.customModels).\(provider.rawValue)"), !custom.isEmpty {
             return custom
         }
-        switch provider {
+        return switch provider {
         case .mock: "mock-fast-ru"
         case .openAI: "gpt-5.4-mini"
         case .deepSeek: "deepseek-v4-flash"
