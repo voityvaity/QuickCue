@@ -194,45 +194,56 @@ private struct ConversationMessageBubble: View {
     }
 
     var body: some View {
-        HStack {
-            if speaker == .me { Spacer(minLength: 54) }
-
-            VStack(alignment: .leading, spacing: 9) {
-                speakerLabel
-
-                if kind == .photo, let path = message.photoRelativePath {
-                    LocalConversationPhoto(relativePath: path)
-                }
-
-                if message.text.isEmpty, status != .failed {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(status == .queued ? "В очереди…" : "Готовлю подсказку…")
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text(message.text)
-                        .textSelection(.enabled)
-                        .foregroundStyle(kind == .error ? .red : .primary)
-                }
-
-                if speaker != .assistant, kind == .speech {
-                    Button("Спросить AI") { store.requestAnswer(for: message) }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.borderless)
-                }
+        HStack(alignment: .bottom, spacing: 8) {
+            switch speaker {
+            case .me:
+                Spacer(minLength: 12)
+                transferButton(to: .partner, systemImage: "arrow.left")
+                bubbleContent
+            case .partner:
+                bubbleContent
+                transferButton(to: .me, systemImage: "arrow.right")
+                Spacer(minLength: 12)
+            case .assistant:
+                bubbleContent
             }
-            .padding(14)
-            .frame(maxWidth: speaker == .assistant ? .infinity : 330, alignment: .leading)
-            .background(bubbleColor, in: RoundedRectangle(cornerRadius: 18))
-            .overlay {
-                if speaker == .assistant {
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color.indigo.opacity(0.18))
-                }
+        }
+    }
+
+    private var bubbleContent: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            speakerLabel
+
+            if kind == .photo, let path = message.photoRelativePath {
+                LocalConversationPhoto(relativePath: path)
             }
 
-            if speaker != .me { Spacer(minLength: speaker == .assistant ? 0 : 54) }
+            if message.text.isEmpty, status != .failed {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(status == .queued ? "В очереди…" : "Готовлю подсказку…")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text(message.text)
+                    .textSelection(.enabled)
+                    .foregroundStyle(kind == .error ? .red : .primary)
+            }
+
+            if speaker != .assistant, kind == .speech {
+                Button("Спросить AI") { store.requestAnswer(for: message) }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: speaker == .assistant ? .infinity : 315, alignment: .leading)
+        .background(bubbleColor, in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            if speaker == .assistant {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color.indigo.opacity(0.18))
+            }
         }
     }
 
@@ -243,18 +254,37 @@ private struct ConversationMessageBubble: View {
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.indigo)
         } else {
-            Menu {
-                Button("Это говорю я") { store.setSpeaker(.me, for: message) }
-                Button("Это говорит собеседник") { store.setSpeaker(.partner, for: message) }
-            } label: {
-                Label(
-                    speaker.title,
-                    systemImage: speaker == .me ? "person.fill" : "person.wave.2.fill"
-                )
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(speaker == .me ? .indigo : .secondary)
-            }
+            Label(
+                speaker.title,
+                systemImage: speaker == .me ? "person.fill" : "person.wave.2.fill"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(speaker == .me ? .indigo : .secondary)
         }
+    }
+
+    private func transferButton(
+        to target: ConversationSpeaker,
+        systemImage: String
+    ) -> some View {
+        Button {
+            withAnimation(.snappy) {
+                store.setSpeaker(target, for: message)
+            }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .background(Color.secondary.opacity(0.1), in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.18))
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Перенести реплику: \(target.title)")
+        .accessibilityHint("Меняет автора этой фразы")
     }
 
     private var bubbleColor: Color {
