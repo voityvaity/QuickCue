@@ -1,6 +1,12 @@
 # Проверка версии 0.2
 
-## Пройдено в текущей Windows-среде
+## Пройдено
+
+- GitHub Actions `Build QuickCue iOS #8` успешно завершился для commit `ad4cdde`: XcodeGen создал проект, приложение собралось для iOS Simulator, все unit-тесты прошли, затем собрался вариант для физического iPhone.
+- Создан артефакт `QuickCue-unsigned-ipa` размером около 2,9 МБ для последующей подписи через Sideloadly.
+- Проверенная сборка: <https://github.com/voityvaity/QuickCue/actions/runs/33496467970>.
+
+## Дополнительно проверено в Windows
 
 - Исходники SwiftUI, SwiftData, новая вкладка «Диалог», быстрый снимок и тесты присутствуют; пустых файлов нет.
 - `project.yml` разобран независимым YAML-парсером без синтаксических ошибок.
@@ -11,14 +17,11 @@
 - Новый App Icon: 1024×1024 PNG, 24-bit RGB без alpha-канала.
 - Deployment target указан как iOS 26.0, проектная версия Xcode — 26.0.
 
-## Нельзя подтвердить на Windows
+## Остаётся проверить на физическом iPhone
 
-- Генерацию `QuickCue.xcodeproj` утилитой XcodeGen.
-- Компиляцию SwiftUI/SwiftData против iOS 26 SDK.
-- XCTest в iOS Simulator до первого запуска обновлённого GitHub Actions.
 - Code signing, архив и App Store Connect validation.
 - Разрешения, камера, Apple Speech и задержки на физическом iPhone 15 Pro Max.
 - Реальные API-вызовы: проект намеренно не содержит ключей.
 
-Перед TestFlight выполните macOS-команды и device smoke test из `README.md` и `docs/TESTFLIGHT.md`. Эта статическая проверка не заменяет Xcode build.
+Перед TestFlight выполните device smoke test из `README.md` и `docs/TESTFLIGHT.md`. Успешная CI-сборка не заменяет проверку камеры, микрофона и реального API непосредственно на iPhone.
 
