@@ -40,6 +40,14 @@ enum AnswerMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum AnswerStatus: String, Codable, Sendable {
+    case queued
+    case thinking
+    case streaming
+    case completed
+    case failed
+}
+
 struct ConversationTurn: Codable, Hashable, Sendable {
     let role: String
     let text: String

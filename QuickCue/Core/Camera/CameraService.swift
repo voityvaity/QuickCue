@@ -23,7 +23,10 @@ final class CameraService: NSObject, ObservableObject {
             allowed = false
         }
         guard allowed else { authorizationDenied = true; return }
-        guard !isConfigured else { start() ; return }
+        guard !isConfigured else {
+            await startAndWait()
+            return
+        }
 
         do {
             session.beginConfiguration()
@@ -37,7 +40,7 @@ final class CameraService: NSObject, ObservableObject {
             session.addOutput(output)
             session.commitConfiguration()
             isConfigured = true
-            start()
+            await startAndWait()
         } catch {
             session.commitConfiguration()
             lastError = error.localizedDescription
@@ -48,6 +51,17 @@ final class CameraService: NSObject, ObservableObject {
         guard isConfigured, !session.isRunning else { return }
         let captureSession = session
         DispatchQueue.global(qos: .userInitiated).async { captureSession.startRunning() }
+    }
+
+    private func startAndWait() async {
+        guard isConfigured, !session.isRunning else { return }
+        let captureSession = session
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                captureSession.startRunning()
+                continuation.resume()
+            }
+        }
     }
 
     func stop() {

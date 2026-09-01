@@ -14,6 +14,7 @@ struct QuickCueApp: App {
             AnswerRecord.self,
             PhotoRecord.self,
             UsageRecord.self,
+            ConversationMessageRecord.self,
         ])
 
         do {

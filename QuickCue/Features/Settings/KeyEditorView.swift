@@ -20,7 +20,7 @@ struct KeyEditorView: View {
                             .foregroundStyle(.green)
                     }
                 } footer: {
-                    Text("Ключ не попадает в файлы проекта. Для публикации другим пользователям используйте собственный серверный прокси.")
+                    Text("Ключ хранится в защищённом хранилище этого iPhone и не попадает в файлы проекта.")
                 }
 
                 if hasStoredKey {
@@ -51,7 +51,7 @@ struct KeyEditorView: View {
                 do { hasStoredKey = try keychain.read(account: provider.keychainAccount) != nil }
                 catch { errorMessage = error.localizedDescription }
             }
-            .alert("Keychain", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            .alert("API-ключ", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK") { errorMessage = nil }
             } message: { Text(errorMessage ?? "") }
         }

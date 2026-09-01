@@ -56,6 +56,9 @@ final class AnswerRecord {
     var inputTokens: Int
     var outputTokens: Int
     var feedback: Int
+    var requestKindRaw: String = "concise"
+    var statusRaw: String = "completed"
+    var errorMessage: String?
 
     init(
         id: UUID = UUID(),
@@ -64,6 +67,8 @@ final class AnswerRecord {
         answer: String = "",
         provider: ProviderKind,
         modelName: String,
+        requestKind: AnswerMode = .concise,
+        status: AnswerStatus = .completed,
         firstTokenMilliseconds: Int = 0,
         totalMilliseconds: Int = 0
     ) {
@@ -79,6 +84,66 @@ final class AnswerRecord {
         self.inputTokens = 0
         self.outputTokens = 0
         self.feedback = 0
+        self.requestKindRaw = requestKind.rawValue
+        self.statusRaw = status.rawValue
+        self.errorMessage = nil
+    }
+}
+
+enum ConversationSpeaker: String, Codable, CaseIterable, Sendable {
+    case me
+    case partner
+    case assistant
+
+    var title: String {
+        switch self {
+        case .me: "Вы"
+        case .partner: "Собеседник"
+        case .assistant: "QuickCue"
+        }
+    }
+}
+
+enum ConversationMessageKind: String, Codable, Sendable {
+    case speech
+    case answer
+    case photo
+    case error
+}
+
+@Model
+final class ConversationMessageRecord {
+    @Attribute(.unique) var id: UUID
+    var sessionID: UUID
+    var createdAt: Date
+    var speakerRaw: String
+    var kindRaw: String
+    var text: String
+    var statusRaw: String
+    var confidence: Double
+    var photoRelativePath: String?
+    var answerID: UUID?
+
+    init(
+        sessionID: UUID,
+        speaker: ConversationSpeaker,
+        kind: ConversationMessageKind,
+        text: String,
+        status: AnswerStatus = .completed,
+        confidence: Double = 0,
+        photoRelativePath: String? = nil,
+        answerID: UUID? = nil
+    ) {
+        self.id = UUID()
+        self.sessionID = sessionID
+        self.createdAt = .now
+        self.speakerRaw = speaker.rawValue
+        self.kindRaw = kind.rawValue
+        self.text = text
+        self.statusRaw = status.rawValue
+        self.confidence = confidence
+        self.photoRelativePath = photoRelativePath
+        self.answerID = answerID
     }
 }
 

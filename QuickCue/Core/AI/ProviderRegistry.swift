@@ -10,8 +10,11 @@ struct ProviderRegistry {
         self.secretStore = secretStore
     }
 
-    func provider(_ requested: ProviderKind) -> any AIProvider {
-        let kind: ProviderKind = settings.mockMode ? .mock : requested
+    func provider(
+        _ requested: ProviderKind,
+        honorMockMode: Bool = true
+    ) -> any AIProvider {
+        let kind: ProviderKind = honorMockMode && settings.mockMode ? .mock : requested
         let model = settings.modelName(for: kind)
         let reader: CredentialReader = { [secretStore] in
             try secretStore.read(account: kind.keychainAccount)

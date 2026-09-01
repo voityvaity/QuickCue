@@ -14,6 +14,10 @@ final class QuestionDetectorTests: XCTestCase {
         XCTAssertTrue(detector.detect("Напиши функцию для поиска дубликатов").isQuestion)
     }
 
+    func testPoliteInterviewPromptIsDetected() {
+        XCTAssertTrue(detector.detect("Расскажите о вашем последнем проекте").isQuestion)
+    }
+
     func testShortNoiseIsIgnored() {
         XCTAssertFalse(detector.detect("ну да").isQuestion)
     }

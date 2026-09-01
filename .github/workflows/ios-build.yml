@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - "codex/**"
 
 permissions:
   contents: read
@@ -16,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Show environment
         run: |
@@ -42,6 +43,35 @@ jobs:
             -destination "generic/platform=iOS Simulator" \
             CODE_SIGNING_ALLOWED=NO \
             clean build
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+
+          SIMULATOR_ID="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          for runtime, devices in data["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
+                      print(device["udid"])
+                      raise SystemExit
+          ')"
+
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No available iPhone simulator found"
+            exit 1
+          fi
+
+          xcodebuild \
+            -project QuickCue.xcodeproj \
+            -scheme QuickCue \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            CODE_SIGNING_ALLOWED=NO \
+            test
 
       - name: Build for physical iPhone
         run: |
@@ -80,7 +110,7 @@ jobs:
           ls -lh QuickCue-unsigned.ipa
 
       - name: Upload unsigned IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: QuickCue-unsigned-ipa
           path: QuickCue-unsigned.ipa

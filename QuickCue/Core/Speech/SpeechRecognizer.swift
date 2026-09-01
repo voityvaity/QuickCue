@@ -10,6 +10,7 @@ final class SpeechRecognizer: ObservableObject {
     @Published private(set) var authorizationDenied = false
 
     var onTranscript: ((String, Bool, Double) -> Void)?
+    var onFailure: ((Error) -> Void)?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ru_RU"))
     private let audioEngine = AVAudioEngine()
@@ -72,7 +73,10 @@ final class SpeechRecognizer: ObservableObject {
                         return
                     }
                 }
-                if error != nil { self.stop() }
+                if let error {
+                    self.stop()
+                    self.onFailure?(error)
+                }
             }
         }
     }

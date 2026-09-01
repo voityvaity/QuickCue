@@ -28,5 +28,19 @@ final class AppSettingsTests: XCTestCase {
         )
         XCTAssertEqual(cost, 200, accuracy: 0.001)
     }
+
+    func testRegistryCanTestRealProviderWhileMockModeIsEnabled() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+
+        let provider = ProviderRegistry(settings: settings).provider(
+            .yandexGPT,
+            honorMockMode: false
+        )
+
+        XCTAssertEqual(provider.kind, .yandexGPT)
+    }
 }
 
