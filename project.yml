@@ -61,3 +61,6 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_NAME: QuickCueTests
+        PRODUCT_MODULE_NAME: QuickCueTests
+        PRODUCT_BUNDLE_IDENTIFIER: ru.quickcue.app.tests
