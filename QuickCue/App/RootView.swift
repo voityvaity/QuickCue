@@ -24,7 +24,7 @@ struct RootView: View {
 
             CameraModeView()
                 .tag(AppTab.camera)
-                .tabItem { Label("Камера", systemImage: "camera.viewfinder") }
+                .tabItem { Label("Камера", systemImage: "camera.fill") }
 
             HistoryView()
                 .tag(AppTab.history)

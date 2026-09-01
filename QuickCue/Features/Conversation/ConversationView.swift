@@ -74,7 +74,7 @@ struct ConversationView: View {
             Text(store.isConversationListening ? "Разговор записывается" : "Готов к разговору")
                 .font(.subheadline.weight(.semibold))
             Spacer()
-            Text(settings.mockMode ? "Тест" : settings.primaryProvider.title)
+            Text(settings.mockMode ? "Тест" : settings.providerTitle(for: settings.primaryProvider))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(settings.mockMode ? .orange : .green)
                 .padding(.horizontal, 9)

@@ -83,7 +83,7 @@ struct LiveView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(settings.mockMode ? "Тестовый режим" : settings.primaryProvider.title)
+                    Text(settings.mockMode ? "Тестовый режим" : settings.providerTitle(for: settings.primaryProvider))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(settings.mockMode ? Color.orange : Color.green)
                         .padding(.horizontal, 9)

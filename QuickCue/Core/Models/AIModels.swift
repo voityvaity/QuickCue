@@ -7,6 +7,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case anthropic
     case xAI
     case yandexGPT
+    case custom
 
     var id: String { rawValue }
 
@@ -17,11 +18,95 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .deepSeek: "DeepSeek"
         case .anthropic: "Anthropic Claude"
         case .xAI: "xAI Grok"
-        case .yandexGPT: "YandexGPT 5.1 Pro"
+        case .yandexGPT: "YandexGPT 5 Pro"
+        case .custom: "Свой API"
         }
     }
 
     var keychainAccount: String { "api-key.\(rawValue)" }
+}
+
+struct ProviderSelection: RawRepresentable, Codable, Hashable, Identifiable, Sendable {
+    let rawValue: String
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    var id: String { rawValue }
+
+    var kind: ProviderKind {
+        if customID != nil { return .custom }
+        return ProviderKind(rawValue: rawValue) ?? .custom
+    }
+
+    var customID: UUID? {
+        guard rawValue.hasPrefix("custom:") else { return nil }
+        return UUID(uuidString: String(rawValue.dropFirst("custom:".count)))
+    }
+
+    static func builtIn(_ kind: ProviderKind) -> Self {
+        Self(rawValue: kind.rawValue)
+    }
+
+    static func custom(_ id: UUID) -> Self {
+        Self(rawValue: "custom:\(id.uuidString.lowercased())")
+    }
+}
+
+enum CustomProviderProtocol: String, CaseIterable, Codable, Identifiable, Sendable {
+    case openAIChatCompletions
+
+    var id: String { rawValue }
+    var title: String { "OpenAI Chat Completions" }
+}
+
+enum CustomAuthScheme: String, CaseIterable, Codable, Identifiable, Sendable {
+    case bearer
+    case apiKey
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bearer: "Bearer"
+        case .apiKey: "Api-Key"
+        }
+    }
+}
+
+struct CustomProviderProfile: Codable, Hashable, Identifiable, Sendable {
+    var id: UUID
+    var displayName: String
+    var baseURL: String
+    var protocolKind: CustomProviderProtocol
+    var authScheme: CustomAuthScheme
+    var modelName: String
+    var inputRateRUB: Double
+    var outputRateRUB: Double
+
+    init(
+        id: UUID = UUID(),
+        displayName: String = "Новый провайдер",
+        baseURL: String = "",
+        protocolKind: CustomProviderProtocol = .openAIChatCompletions,
+        authScheme: CustomAuthScheme = .bearer,
+        modelName: String = "",
+        inputRateRUB: Double = 0,
+        outputRateRUB: Double = 0
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.baseURL = baseURL
+        self.protocolKind = protocolKind
+        self.authScheme = authScheme
+        self.modelName = modelName
+        self.inputRateRUB = inputRateRUB
+        self.outputRateRUB = outputRateRUB
+    }
+
+    var selection: ProviderSelection { .custom(id) }
+    var keychainAccount: String { "api-key.custom.\(id.uuidString.lowercased())" }
 }
 
 enum AnswerMode: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -60,6 +145,7 @@ struct AIRequest: Sendable {
     let mode: AnswerMode
     let imageJPEG: Data?
     let maxOutputTokens: Int
+    let systemPrompt: String
 
     init(
         id: UUID = UUID(),
@@ -67,7 +153,8 @@ struct AIRequest: Sendable {
         context: [ConversationTurn],
         mode: AnswerMode = .concise,
         imageJPEG: Data? = nil,
-        maxOutputTokens: Int = 220
+        maxOutputTokens: Int = 220,
+        systemPrompt: String = PromptFactory.defaultConciseSystem
     ) {
         self.id = id
         self.question = question
@@ -75,6 +162,7 @@ struct AIRequest: Sendable {
         self.mode = mode
         self.imageJPEG = imageJPEG
         self.maxOutputTokens = maxOutputTokens
+        self.systemPrompt = systemPrompt
     }
 }
 

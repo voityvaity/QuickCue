@@ -38,7 +38,7 @@ func openAICompatibleBody(request: AIRequest, model: String) -> [String: Any] {
     [
         "model": model,
         "messages": [
-            ["role": "system", "content": PromptFactory.conciseSystem],
+            ["role": "system", "content": PromptFactory.systemText(for: request)],
             ["role": "user", "content": PromptFactory.userText(for: request)],
         ],
         "stream": true,

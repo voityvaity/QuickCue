@@ -18,6 +18,7 @@ private struct HistoryDay: Identifiable {
 
 struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var settings: AppSettings
     @Query(sort: \AnswerRecord.createdAt, order: .reverse) private var answers: [AnswerRecord]
     @Query(sort: \SessionRecord.startedAt, order: .reverse) private var sessions: [SessionRecord]
     @Query(sort: \PhotoRecord.createdAt, order: .reverse) private var photos: [PhotoRecord]
@@ -264,6 +265,7 @@ private struct HistoryPhotoThumbnail: View {
 }
 
 private struct AnswerHistoryDetailView: View {
+    @EnvironmentObject private var settings: AppSettings
     @Bindable var answer: AnswerRecord
 
     var body: some View {
@@ -277,7 +279,10 @@ private struct AnswerHistoryDetailView: View {
                     Text(answer.answer).textSelection(.enabled)
                 }
                 Divider()
-                LabeledContent("Провайдер", value: ProviderKind(rawValue: answer.providerRaw)?.title ?? answer.providerRaw)
+                LabeledContent(
+                    "Провайдер",
+                    value: settings.providerTitle(for: ProviderSelection(rawValue: answer.providerRaw))
+                )
                 LabeledContent("Модель", value: answer.modelName)
                 LabeledContent("Первый фрагмент", value: "\(answer.firstTokenMilliseconds) мс")
                 LabeledContent("Полностью", value: "\(answer.totalMilliseconds) мс")

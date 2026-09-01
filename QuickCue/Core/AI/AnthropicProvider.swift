@@ -33,7 +33,7 @@ struct AnthropicProvider: AIProvider {
                     }
                     let body: [String: Any] = [
                         "model": modelName,
-                        "system": PromptFactory.conciseSystem,
+                        "system": PromptFactory.systemText(for: request),
                         "messages": [["role": "user", "content": content]],
                         "max_tokens": request.maxOutputTokens,
                         "thinking": ["type": "disabled"],

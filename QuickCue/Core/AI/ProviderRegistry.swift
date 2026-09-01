@@ -11,13 +11,17 @@ struct ProviderRegistry {
     }
 
     func provider(
-        _ requested: ProviderKind,
+        _ requested: ProviderSelection,
         honorMockMode: Bool = true
     ) -> any AIProvider {
-        let kind: ProviderKind = honorMockMode && settings.mockMode ? .mock : requested
-        let model = settings.modelName(for: kind)
+        let selection: ProviderSelection = honorMockMode && settings.mockMode
+            ? .builtIn(.mock)
+            : requested
+        let kind = selection.kind
+        let model = settings.modelName(for: selection)
+        let account = settings.customProvider(for: selection)?.keychainAccount ?? kind.keychainAccount
         let reader: CredentialReader = { [secretStore] in
-            try secretStore.read(account: kind.keychainAccount)
+            try secretStore.read(account: account)
         }
 
         switch kind {
@@ -54,7 +58,21 @@ struct ProviderRegistry {
                 folderID: settings.yandexFolderID,
                 credential: reader
             )
+
+        case .custom:
+            let profile = settings.customProvider(for: selection) ?? CustomProviderProfile(
+                id: selection.customID ?? UUID(),
+                displayName: "Удалённый провайдер"
+            )
+            return CustomOpenAIProvider(profile: profile, credential: reader)
         }
+    }
+
+    func provider(
+        _ requested: ProviderKind,
+        honorMockMode: Bool = true
+    ) -> any AIProvider {
+        provider(.builtIn(requested), honorMockMode: honorMockMode)
     }
 }
 

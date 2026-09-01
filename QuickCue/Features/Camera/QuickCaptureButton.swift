@@ -51,12 +51,12 @@ struct QuickCaptureButton: View {
             ZStack {
                 Circle()
                     .fill(Color.indigo.opacity(0.1))
-                    .frame(width: 58, height: 58)
+                    .frame(width: 72, height: 72)
                 if controller.phase.isBusy {
                     ProgressView().tint(.indigo)
                 } else {
                     Image(systemName: controller.phase == .finished ? "checkmark" : "camera.fill")
-                        .font(.title2.weight(.semibold))
+                        .font(.title.weight(.semibold))
                         .foregroundStyle(.indigo)
                 }
             }

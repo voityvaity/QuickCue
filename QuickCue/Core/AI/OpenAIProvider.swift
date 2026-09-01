@@ -31,7 +31,7 @@ struct OpenAIProvider: AIProvider {
                     }
                     let body: [String: Any] = [
                         "model": modelName,
-                        "instructions": PromptFactory.conciseSystem,
+                        "instructions": PromptFactory.systemText(for: request),
                         "input": [["role": "user", "content": userContent]],
                         "stream": true,
                         "store": false,

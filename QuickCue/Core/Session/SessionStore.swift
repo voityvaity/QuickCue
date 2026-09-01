@@ -242,7 +242,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func beginSession() {
-        let provider = settings.mockMode ? ProviderKind.mock : settings.primaryProvider
+        let provider = settings.mockMode ? ProviderKind.mock : settings.primaryProvider.kind
         let title = Date.now.formatted(date: .abbreviated, time: .shortened)
         let session = SessionRecord(title: title, provider: provider)
         modelContext.insert(session)
@@ -466,6 +466,7 @@ final class SessionStore: ObservableObject {
             requestKind: mode,
             status: .thinking
         )
+        record.providerRaw = primary.selection.rawValue
         modelContext.insert(record)
         visibleAnswers.insert(record, at: 0)
         conversationMessage?.answerID = record.id
@@ -474,7 +475,8 @@ final class SessionStore: ObservableObject {
             question: prompt,
             context: turns.map { $0.1 },
             mode: mode,
-            imageJPEG: imageJPEG
+            imageJPEG: imageJPEG,
+            systemPrompt: settings.systemPrompt
         )
         let clock = ContinuousClock()
         let started = clock.now
@@ -482,7 +484,7 @@ final class SessionStore: ObservableObject {
         var usage = TokenUsage(inputTokens: 0, outputTokens: 0)
 
         do {
-            for try await (winningKind, event) in router.stream(
+            for try await (winningProvider, event) in router.stream(
                 request: request,
                 primary: primary,
                 fallback: fallback,
@@ -492,12 +494,12 @@ final class SessionStore: ObservableObject {
                 case .textDelta(let delta):
                     if !firstTokenRecorded {
                         let elapsed = started.duration(to: clock.now).milliseconds
-                        record.providerRaw = winningKind.rawValue
-                        record.modelName = registry.provider(winningKind).modelName
+                        record.providerRaw = winningProvider.rawValue
+                        record.modelName = registry.provider(winningProvider).modelName
                         record.firstTokenMilliseconds = elapsed
                         record.statusRaw = AnswerStatus.streaming.rawValue
                         conversationMessage?.statusRaw = AnswerStatus.streaming.rawValue
-                        logger.firstToken(provider: winningKind, milliseconds: elapsed)
+                        logger.firstToken(provider: winningProvider.kind, milliseconds: elapsed)
                         firstTokenRecorded = true
                     }
                     record.answer += delta
@@ -513,7 +515,7 @@ final class SessionStore: ObservableObject {
                     record.totalMilliseconds = elapsed
                     record.statusRaw = AnswerStatus.completed.rawValue
                     conversationMessage?.statusRaw = AnswerStatus.completed.rawValue
-                    logger.completed(provider: winningKind, milliseconds: elapsed)
+                    logger.completed(provider: winningProvider.kind, milliseconds: elapsed)
                 }
             }
 
@@ -521,11 +523,11 @@ final class SessionStore: ObservableObject {
             record.statusRaw = AnswerStatus.completed.rawValue
             conversationMessage?.statusRaw = AnswerStatus.completed.rawValue
             turns.append((.now, ConversationTurn(role: "assistant", text: record.answer)))
-            let provider = ProviderKind(rawValue: record.providerRaw) ?? .mock
+            let provider = ProviderSelection(rawValue: record.providerRaw)
             let cost = settings.estimatedCostRUB(for: usage, provider: provider)
             ledger.record(
                 sessionID: session.id,
-                provider: provider,
+                provider: provider.kind,
                 kind: mode.rawValue,
                 usage: usage,
                 estimatedCostRUB: cost

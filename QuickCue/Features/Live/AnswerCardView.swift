@@ -3,6 +3,7 @@ import UIKit
 
 struct AnswerCardView: View {
     @EnvironmentObject private var store: SessionStore
+    @EnvironmentObject private var settings: AppSettings
     @Bindable var answer: AnswerRecord
     @State private var showTechnicalDetails = false
 
@@ -13,7 +14,7 @@ struct AnswerCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(ProviderKind(rawValue: answer.providerRaw)?.title ?? answer.providerRaw)
+                Text(settings.providerTitle(for: ProviderSelection(rawValue: answer.providerRaw)))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.indigo)
                 Spacer()
