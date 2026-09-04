@@ -1,0 +1,28 @@
+# Generated Xcode and local signing/build data
+QuickCue.xcodeproj/
+DerivedData/
+build/
+build-device/
+TestResults/
+*.xcresult
+ipa/
+*.ipa
+*.xcarchive
+*.xcuserstate
+xcuserdata/
+Config/Local.xcconfig
+
+# Credentials and local runtime state
+.env
+.env.*
+!.env.example
+*.p12
+*.mobileprovision
+*.key
+*.pem
+*.store
+*.store-shm
+*.store-wal
+.DS_Store
+__pycache__/
+.validation-tools/

@@ -47,11 +47,14 @@ struct CustomOpenAIProvider: AIProvider {
                         body: openAICompatibleBody(request: request, model: modelName),
                         headers: ["Authorization": authorization]
                     )
+                    var validator = StreamCompletionValidator()
                     for try await message in transport.stream(urlRequest) {
-                        for event in parseChatCompletionEvent(message) {
+                        for event in try validatedChatCompletionEvents(message) {
+                            validator.observe(event)
                             continuation.yield(event)
                         }
                     }
+                    try validator.validate()
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)

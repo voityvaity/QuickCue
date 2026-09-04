@@ -5,6 +5,8 @@ struct ConversationView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var settings: AppSettings
     @State private var showRoleExplanation = false
+    @State private var manualText = ""
+    @State private var hasEndedConversation = false
 
     var body: some View {
         NavigationStack {
@@ -28,7 +30,7 @@ struct ConversationView: View {
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
-                    .padding(.bottom, 130)
+                    .padding(.bottom, 16)
                 }
                 .background(Color(uiColor: .systemGroupedBackground))
                 .onChange(of: store.visibleConversationMessages.count) { _, _ in
@@ -71,15 +73,14 @@ struct ConversationView: View {
             Circle()
                 .fill(store.isConversationListening ? Color.red : Color.secondary)
                 .frame(width: 9, height: 9)
-            Text(store.isConversationListening ? "Разговор записывается" : "Готов к разговору")
+            Text(store.isConversationListening ? "Слушаю разговор" : "Микрофон выключен")
                 .font(.subheadline.weight(.semibold))
             Spacer()
-            Text(settings.mockMode ? "Тест" : settings.providerTitle(for: settings.primaryProvider))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(settings.mockMode ? .orange : .green)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background((settings.mockMode ? Color.orange : Color.green).opacity(0.1), in: Capsule())
+            if settings.mockMode {
+                Text("Тест · без сети").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+            } else {
+                ProviderConnectionBadge(selection: settings.primaryProvider, compact: true)
+            }
         }
         .padding(14)
         .background(.background, in: RoundedRectangle(cornerRadius: 18))
@@ -95,9 +96,11 @@ struct ConversationView: View {
                     .font(.system(size: 54, weight: .medium))
                     .foregroundStyle(.indigo)
             }
-            Text("Начните разговор")
+            Text(hasEndedConversation ? "Разговор завершён" : "Начните разговор")
                 .font(.title2.bold())
-            Text("QuickCue покажет реплики собеседника, ваши ответы и подсказки AI как обычный чат.")
+            Text(hasEndedConversation
+                 ? "Реплики и ответы сохранены в Истории. Можно начать новый разговор или написать вопрос ниже."
+                 : "QuickCue покажет реплики собеседника, ваши ответы и подсказки AI как обычный чат. Аудиозапись не сохраняется.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -126,30 +129,62 @@ struct ConversationView: View {
     }
 
     private var conversationControls: some View {
-        HStack(spacing: 32) {
-            QuickCaptureButton(
-                presentation: .conversation,
-                includeInConversation: true
-            )
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                TextField("Написать вопрос AI", text: $manualText, axis: .vertical)
+                    .lineLimit(1...3)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.send)
+                    .onSubmit(submitText)
+                Button(action: submitText) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title)
+                        .frame(width: 44, height: 44)
+                }
+                .disabled(manualText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Отправить текст AI")
+            }
+            .padding(.horizontal)
 
-            conversationControl(
-                title: store.isConversationListening ? "Пауза" : "Слушать",
-                systemImage: store.isConversationListening ? "mic.slash.fill" : "mic.fill",
-                color: store.isConversationListening ? .red : .indigo,
-                action: store.toggleConversationListening
-            )
+            if store.visibleConversationMessages.contains(where: {
+                [AnswerStatus.queued.rawValue, AnswerStatus.thinking.rawValue, AnswerStatus.streaming.rawValue].contains($0.statusRaw)
+            }) {
+                Button("Остановить ответы AI") { store.cancelActiveRequests() }
+                    .font(.caption.weight(.semibold))
+                    .frame(minHeight: 32)
+            }
 
-            conversationControl(
-                title: "Завершить",
-                systemImage: "power",
-                color: .red,
-                action: store.endConversation
-            )
+            HStack(spacing: 32) {
+                QuickCaptureButton(presentation: .conversation, includeInConversation: true)
+                conversationControl(
+                    title: store.isConversationListening ? "Пауза" : "Слушать",
+                    systemImage: store.isConversationListening ? "mic.slash.fill" : "mic.fill",
+                    color: store.isConversationListening ? .red : .indigo
+                ) {
+                    hasEndedConversation = false
+                    store.toggleConversationListening()
+                }
+                conversationControl(title: "Завершить", systemImage: "power", color: .red) {
+                    store.endConversation()
+                    hasEndedConversation = true
+                }
+                .disabled(store.currentSession == nil)
+            }
+            PhotoTransferDisclosure(compact: true)
+                .padding(.horizontal)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 12)
         .padding(.bottom, 8)
         .background(.ultraThinMaterial)
+    }
+
+    private func submitText() {
+        let text = manualText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        hasEndedConversation = false
+        store.submitConversationText(text)
+        manualText = ""
     }
 
     private func conversationControl(
@@ -218,22 +253,23 @@ private struct ConversationMessageBubble: View {
                 LocalConversationPhoto(relativePath: path)
             }
 
-            if message.text.isEmpty, status != .failed {
+            if message.text.isEmpty, status == .queued || status == .thinking || status == .streaming {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(status == .queued ? "В очереди…" : "Готовлю подсказку…")
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text(message.text)
+                Text(message.text.isEmpty ? (status == .cancelled ? "Ответ остановлен" : "Ответ не получен") : message.text)
                     .textSelection(.enabled)
                     .foregroundStyle(kind == .error ? .red : .primary)
             }
 
             if speaker != .assistant, kind == .speech {
-                Button("Спросить AI") { store.requestAnswer(for: message) }
+                Button("Отправить AI") { store.requestAnswer(for: message) }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
             }
         }
         .padding(14)
@@ -275,7 +311,7 @@ private struct ConversationMessageBubble: View {
             Image(systemName: systemImage)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
+                .frame(width: 44, height: 44)
                 .background(Color.secondary.opacity(0.1), in: Circle())
                 .overlay {
                     Circle()

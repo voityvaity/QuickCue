@@ -74,5 +74,75 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.primaryProvider, .builtIn(.openAI))
         XCTAssertEqual(settings.fallbackProvider, second.selection)
     }
+
+    func testConnectionVerificationPersistsAndModelEditInvalidatesIt() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        let selection = ProviderSelection.builtIn(.openAI)
+        settings.setConnectionReport(ProviderConnectionReport(
+            state: .verified, modelName: settings.modelName(for: selection), checkedAt: .now,
+            firstTokenMilliseconds: 100, totalMilliseconds: 250, errorCategory: nil
+        ), for: selection)
+        XCTAssertEqual(AppSettings(defaults: defaults).connectionReport(for: selection).state, .verified)
+        settings.setModelName("different-model", for: selection)
+        XCTAssertEqual(settings.connectionReport(for: selection).state, .unverified)
+        XCTAssertNil(settings.connectionReport(for: selection).checkedAt)
+    }
+
+    func testCustomEndpointChangeInvalidatesVerificationButRatesDoNot() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        var profile = CustomProviderProfile(displayName: "Test", baseURL: "https://a.example", modelName: "m")
+        settings.createCustomProvider(profile)
+        settings.setConnectionReport(ProviderConnectionReport(state: .verified, modelName: "m", checkedAt: .now, firstTokenMilliseconds: 10, totalMilliseconds: 20, errorCategory: nil), for: profile.selection)
+        settings.setRates(input: 100, output: 100, for: profile.selection)
+        XCTAssertEqual(settings.connectionReport(for: profile.selection).state, .verified)
+        profile.baseURL = "https://b.example"
+        settings.updateCustomProvider(profile)
+        XCTAssertEqual(settings.connectionReport(for: profile.selection).state, .unverified)
+    }
+
+    func testAppearanceDefaultsToLight() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(AppSettings(defaults: defaults).appearance, .light)
+    }
+
+    func testSharedPromptEditsStillApplyToAllModesAfterUpgrade() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("Сохранённый пользовательский промпт", forKey: "settings.systemPrompt")
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.prompt(for: .conversation), settings.systemPrompt)
+        XCTAssertEqual(settings.prompt(for: .photo), settings.systemPrompt)
+        settings.systemPrompt = "Новая инструкция"
+        XCTAssertEqual(settings.prompt(for: .conversation), "Новая инструкция")
+        XCTAssertEqual(settings.prompt(for: .photo), "Новая инструкция")
+    }
+
+    func testQueuedCredentialSnapshotNeverChangesWithKeyEditor() throws {
+        let secrets = MutableFixtureSecrets()
+        try secrets.save("old-fixture", account: "a")
+        let snapshot = ProviderRegistry.snapshotCredential(account: "a", from: secrets)
+        try secrets.save("new-fixture", account: "a")
+        XCTAssertEqual(try snapshot(), "old-fixture")
+        try secrets.delete(account: "a")
+        XCTAssertEqual(try snapshot(), "old-fixture")
+        XCTAssertNil(try ProviderRegistry.snapshotCredential(account: "a", from: secrets)())
+    }
+}
+
+private final class MutableFixtureSecrets: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+    func save(_ value: String, account: String) throws { lock.lock(); defer { lock.unlock() }; values[account] = value }
+    func read(account: String) throws -> String? { lock.lock(); defer { lock.unlock() }; return values[account] }
+    func delete(account: String) throws { lock.lock(); defer { lock.unlock() }; values[account] = nil }
 }
 

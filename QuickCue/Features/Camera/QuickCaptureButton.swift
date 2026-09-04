@@ -8,20 +8,35 @@ struct QuickCaptureButton: View {
     }
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: SessionStore
     @StateObject private var controller = QuickCaptureController()
+    @State private var captureTask: Task<Void, Never>?
+    @State private var captureSessionID: UUID?
+    @State private var captureOperationID = UUID()
+    @State private var isCapturing = false
 
     let presentation: Presentation
     var includeInConversation = false
 
     var body: some View {
         Button {
-            Task {
+            guard !isCapturing else { return }
+            guard let sessionID = store.preparePhotoSession() else { return }
+            captureSessionID = sessionID
+            let operation = UUID()
+            captureOperationID = operation
+            isCapturing = true
+            captureTask = Task {
                 await controller.capture(
                     store: store,
                     modelContext: modelContext,
                     includeInConversation: includeInConversation
                 )
+                if captureOperationID == operation {
+                    isCapturing = false
+                    captureTask = nil
+                }
             }
         } label: {
             switch presentation {
@@ -32,10 +47,17 @@ struct QuickCaptureButton: View {
             }
         }
         .buttonStyle(.plain)
-        .disabled(controller.phase.isBusy)
+        .disabled(isCapturing || controller.phase.isBusy)
         .sensoryFeedback(.success, trigger: controller.completionCounter)
         .accessibilityLabel("Сфотографировать и сразу отправить")
         .accessibilityValue(controller.phase.title)
+        .onDisappear(perform: cancelCapture)
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { cancelCapture() }
+        }
+        .onChange(of: store.currentSession?.id) { _, sessionID in
+            if let captureSessionID, captureSessionID != sessionID { cancelCapture() }
+        }
         .alert("Быстрая камера", isPresented: Binding(
             get: { controller.errorMessage != nil },
             set: { if !$0 { controller.errorMessage = nil } }
@@ -44,6 +66,15 @@ struct QuickCaptureButton: View {
         } message: {
             Text(controller.errorMessage ?? "")
         }
+    }
+
+    private func cancelCapture() {
+        captureOperationID = UUID()
+        captureTask?.cancel()
+        captureTask = nil
+        captureSessionID = nil
+        isCapturing = false
+        controller.cancel()
     }
 
     private var compactLabel: some View {

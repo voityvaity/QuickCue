@@ -47,26 +47,15 @@ struct AnthropicProvider: AIProvider {
                             "anthropic-version": "2023-06-01",
                         ]
                     )
+                    var decoder = AnthropicStreamDecoder()
+                    var validator = StreamCompletionValidator()
                     for try await message in transport.stream(urlRequest) {
-                        guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { continue }
-                        if type == "content_block_delta",
-                           let delta = json["delta"] as? [String: Any],
-                           delta["type"] as? String == "text_delta",
-                           let text = delta["text"] as? String {
-                            continuation.yield(.textDelta(text))
-                        } else if type == "message_delta",
-                                  let usage = json["usage"] as? [String: Any] {
-                            continuation.yield(.usage(TokenUsage(
-                                inputTokens: 0,
-                                outputTokens: JSONValue.int(usage["output_tokens"])
-                            )))
-                        } else if type == "message_stop" {
-                            continuation.yield(.completed)
-                        } else if type == "error" {
-                            let detail = (json["error"] as? [String: Any])?["message"] as? String ?? "Ошибка потока Claude"
-                            throw AIProviderError.badResponse(200, detail)
+                        for event in try decoder.events(for: message) {
+                            validator.observe(event)
+                            continuation.yield(event)
                         }
                     }
+                    try validator.validate()
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }

@@ -35,9 +35,14 @@ struct YandexGPTProvider: AIProvider {
                             "x-folder-id": folderID,
                         ]
                     )
+                    var validator = StreamCompletionValidator()
                     for try await message in transport.stream(urlRequest) {
-                        for event in parseChatCompletionEvent(message) { continuation.yield(event) }
+                        for event in try validatedChatCompletionEvents(message) {
+                            validator.observe(event)
+                            continuation.yield(event)
+                        }
                     }
+                    try validator.validate()
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }

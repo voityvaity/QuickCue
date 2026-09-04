@@ -2,6 +2,9 @@ name: Build QuickCue iOS
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -24,6 +27,9 @@ jobs:
           sw_vers
           xcodebuild -version
           xcodebuild -showsdks
+
+      - name: Validate privacy manifest and repository safety
+        run: python3 .github/scripts/validate_repository.py
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -70,8 +76,18 @@ jobs:
             -scheme QuickCue \
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -resultBundlePath TestResults/QuickCue.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: QuickCue-test-results
+          path: TestResults/QuickCue.xcresult
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Build for physical iPhone
         run: |

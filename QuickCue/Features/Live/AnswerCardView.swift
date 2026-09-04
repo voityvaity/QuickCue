@@ -11,6 +11,9 @@ struct AnswerCardView: View {
         AnswerStatus(rawValue: answer.statusRaw) ?? .completed
     }
 
+    private var isPhoto: Bool { answer.requestKindRaw == AnswerMode.photo.rawValue }
+    private var isCurrentSession: Bool { store.currentSession?.id == answer.sessionID }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -26,12 +29,27 @@ struct AnswerCardView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(3)
 
-            if status == .failed {
-                Label(answer.errorMessage ?? "Не удалось получить ответ", systemImage: "exclamationmark.triangle.fill")
+            if status == .failed || status == .cancelled {
+                if !answer.answer.isEmpty {
+                    Text(answer.answer).textSelection(.enabled)
+                }
+                Label(answer.errorMessage ?? (status == .cancelled ? "Запрос остановлен" : "Не удалось получить ответ"),
+                      systemImage: status == .cancelled ? "stop.circle" : "exclamationmark.triangle.fill")
                     .font(.subheadline)
-                    .foregroundStyle(.red)
-                Button("Повторить") { store.retryAnswer(answer) }
-                    .buttonStyle(.borderedProminent)
+                    .foregroundStyle(status == .cancelled ? Color.secondary : Color.red)
+                if isPhoto {
+                    Text("Повторите отправку на экране проверки фото или переснимите задачу на вкладке «Камера».")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Button("Повторить") { store.retryAnswer(answer) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!isCurrentSession)
+                }
+                if !answer.answer.isEmpty {
+                    actionButton("Копировать частичный ответ", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = answer.answer
+                    }
+                }
             } else if answer.answer.isEmpty {
                 HStack(spacing: 9) {
                     ProgressView().controlSize(.small)
@@ -45,11 +63,15 @@ struct AnswerCardView: View {
                     .animation(.default, value: answer.answer)
 
                 HStack(spacing: 8) {
-                    actionButton("Короче", systemImage: "text.alignleft") {
-                        store.requestVariation(.concise, for: answer)
-                    }
-                    actionButton("Подробнее", systemImage: "list.bullet.rectangle") {
-                        store.requestVariation(.detailed, for: answer)
+                    if !isPhoto {
+                        actionButton("Короче", systemImage: "text.alignleft") {
+                            store.requestVariation(.concise, for: answer)
+                        }
+                        .disabled(!isCurrentSession || status != .completed)
+                        actionButton("Подробнее", systemImage: "list.bullet.rectangle") {
+                            store.requestVariation(.detailed, for: answer)
+                        }
+                        .disabled(!isCurrentSession || status != .completed)
                     }
                     actionButton("Копировать", systemImage: "doc.on.doc") {
                         UIPasteboard.general.string = answer.answer
@@ -71,6 +93,12 @@ struct AnswerCardView: View {
                 }
                 .font(.caption)
                 .buttonStyle(.borderless)
+            }
+
+            if status == .queued || status == .thinking || status == .streaming {
+                Button("Остановить ответ", role: .cancel) { store.cancelAnswer(answer) }
+                    .font(.caption.weight(.semibold))
+                    .frame(minHeight: 44)
             }
 
             DisclosureGroup("Подробности", isExpanded: $showTechnicalDetails) {
@@ -118,6 +146,9 @@ struct AnswerCardView: View {
         case .failed:
             Label("Ошибка", systemImage: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)
+        case .cancelled:
+            Label("Остановлен", systemImage: "stop.circle")
+                .foregroundStyle(.secondary)
         }
     }
 

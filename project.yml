@@ -14,8 +14,8 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
     SUPPORTS_MACCATALYST: NO
     ENABLE_USER_SCRIPT_SANDBOXING: YES
-    CURRENT_PROJECT_VERSION: 3
-    MARKETING_VERSION: 0.3.0
+    CURRENT_PROJECT_VERSION: 4
+    MARKETING_VERSION: 0.3.1
 configs:
   Debug: debug
   Release: release
@@ -58,9 +58,24 @@ targets:
       - path: QuickCueTests
     dependencies:
       - target: QuickCue
+      - target: QuickCueLegacyFixture
+        embed: false
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_NAME: QuickCueTests
         PRODUCT_MODULE_NAME: QuickCueTests
         PRODUCT_BUNDLE_IDENTIFIER: ru.quickcue.app.tests
+  # Test-only original unversioned model module. Never embed it in the app.
+  QuickCueLegacyFixture:
+    type: framework.static
+    platform: iOS
+    sources:
+      - path: QuickCueMigrationFixtures
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_NAME: QuickCueLegacyFixture
+        PRODUCT_MODULE_NAME: QuickCueLegacyFixture
+        PRODUCT_BUNDLE_IDENTIFIER: ru.quickcue.app.legacy-fixture
+        SKIP_INSTALL: YES

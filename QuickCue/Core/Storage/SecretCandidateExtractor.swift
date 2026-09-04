@@ -6,6 +6,10 @@ enum SecretCandidateExtractor {
     )
 
     static func bestCandidate(in recognizedText: String) -> String? {
+        candidates(in: recognizedText).first
+    }
+
+    static func candidates(in recognizedText: String) -> [String] {
         let sourceCandidates = matches(in: recognizedText)
         let compactCandidates = recognizedText
             .split(whereSeparator: \.isNewline)
@@ -17,9 +21,9 @@ enum SecretCandidateExtractor {
                 matches(in: line.replacingOccurrences(of: " ", with: ""))
             }
 
-        return (sourceCandidates + compactCandidates)
+        return Array(Set(sourceCandidates + compactCandidates))
             .filter(isPlausibleSecret)
-            .max { score($0) < score($1) }
+            .sorted { score($0) == score($1) ? $0 < $1 : score($0) > score($1) }
     }
 
     private static func matches(in text: String) -> [String] {

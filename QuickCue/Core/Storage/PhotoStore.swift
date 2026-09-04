@@ -12,6 +12,12 @@ struct PhotoStore: Sendable {
     }
 
     func url(for relativePath: String) throws -> URL {
+        let parts = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[0] == "Photos",
+              !parts[1].contains("\\"), parts[1].hasSuffix(".jpg"),
+              UUID(uuidString: String(parts[1].dropLast(4))) != nil else {
+            throw PhotoStoreError.invalidPath
+        }
         let base = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -37,5 +43,10 @@ struct PhotoStore: Sendable {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
+}
+
+enum PhotoStoreError: LocalizedError {
+    case invalidPath
+    var errorDescription: String? { "Некорректная ссылка на локальное фото. Файл не изменён." }
 }
 

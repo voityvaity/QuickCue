@@ -10,6 +10,8 @@ private enum AppTab: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var store: SessionStore
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .live
 
     var body: some View {
@@ -35,8 +37,13 @@ struct RootView: View {
                 .tabItem { Label("Настройки", systemImage: "gearshape") }
         }
         .tint(.indigo)
+        .preferredColorScheme(settings.appearance == .light ? .light : nil)
         .onChange(of: selectedTab) { _, _ in
             store.stopAllListening()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { store.handleSceneBecameActive() }
+            else { store.handleSceneBecameInactive() }
         }
     }
 }

@@ -35,7 +35,7 @@ struct SettingsView: View {
                             providerRow(
                                 title: provider.title,
                                 systemImage: providerIcon(provider),
-                                keychainAccount: provider.keychainAccount
+                                selection: .builtIn(provider)
                             )
                         }
                     }
@@ -47,15 +47,13 @@ struct SettingsView: View {
                             providerRow(
                                 title: profile.displayName,
                                 systemImage: "server.rack",
-                                keychainAccount: profile.keychainAccount
+                                selection: profile.selection
                             )
                         }
                     }
 
                     Button {
-                        let profile = CustomProviderProfile()
-                        settings.addCustomProvider(profile)
-                        createdProviderID = profile.id
+                        createdProviderID = UUID()
                     } label: {
                         Label("Добавить своего провайдера", systemImage: "plus.circle.fill")
                     }
@@ -66,6 +64,11 @@ struct SettingsView: View {
                 }
 
                 Section("Поведение QuickCue") {
+                    Picker("Оформление", selection: $settings.appearance) {
+                        ForEach(AppAppearance.allCases) { appearance in
+                            Text(appearance.title).tag(appearance)
+                        }
+                    }
                     NavigationLink {
                         PromptSettingsView()
                     } label: {
@@ -104,6 +107,9 @@ struct SettingsView: View {
                     Label("Текст, ответы и фото хранятся локально", systemImage: "iphone.gen3")
                     Label("API-ключи хранятся в Keychain", systemImage: "key.fill")
                     Label("При смене вкладки микрофон останавливается", systemImage: "hand.raised")
+                    Text("При запросе текст передаётся выбранному AI. Фото передаётся vision-модели, а текстовой модели — только распознанный текст. В тестовом режиме данные не отправляются.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Настройки")
@@ -141,28 +147,13 @@ struct SettingsView: View {
     private func providerRow(
         title: String,
         systemImage: String,
-        keychainAccount: String
+        selection: ProviderSelection
     ) -> some View {
         HStack {
             Label(title, systemImage: systemImage)
             Spacer()
-            ProviderKeyStatus(keychainAccount: keychainAccount)
+            ProviderConnectionBadge(selection: selection, compact: true)
         }
-    }
-}
-
-private struct ProviderKeyStatus: View {
-    let keychainAccount: String
-    @State private var hasKey = false
-
-    var body: some View {
-        Image(systemName: hasKey ? "checkmark.circle.fill" : "circle")
-            .foregroundStyle(hasKey ? Color.green : Color.secondary)
-            .task { refresh() }
-    }
-
-    private func refresh() {
-        hasKey = (try? KeychainStore().read(account: keychainAccount)) != nil
     }
 }
 
@@ -175,6 +166,7 @@ private enum ProviderTestState: Equatable {
 
 private struct BuiltInProviderSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.scenePhase) private var scenePhase
     let provider: ProviderKind
 
     @State private var modelName = ""
@@ -183,6 +175,7 @@ private struct BuiltInProviderSettingsView: View {
     @State private var showKeyEditor = false
     @State private var hasStoredKey = false
     @State private var testState: ProviderTestState = .idle
+    @State private var testTask: Task<Void, Never>?
 
     private var selection: ProviderSelection { .builtIn(provider) }
 
@@ -199,6 +192,10 @@ private struct BuiltInProviderSettingsView: View {
                     TextField("Folder ID", text: $settings.yandexFolderID)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .onChange(of: settings.yandexFolderID) { _, _ in
+                            settings.markConnectionUnverified(selection)
+                            testState = .idle
+                        }
                 }
 
                 testButton
@@ -214,7 +211,7 @@ private struct BuiltInProviderSettingsView: View {
             } footer: {
                 Text(provider == .yandexGPT
                      ? "Нужны привязанный платёжный аккаунт, Folder ID, роль ai.languageModels.user и API-ключ сервисного аккаунта."
-                     : "QuickCue отправит короткий тестовый запрос и покажет задержку до первых слов.")
+                     : "QuickCue отправит короткий платный запрос, дождётся его завершения и покажет задержку до первых слов.")
             }
 
             Section {
@@ -238,6 +235,10 @@ private struct BuiltInProviderSettingsView: View {
         }
         .navigationTitle(provider.title)
         .task { load() }
+        .onDisappear(perform: cancelTest)
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { cancelTest() }
+        }
         .sheet(isPresented: $showKeyEditor, onDismiss: refreshKeyStatus) {
             KeyEditorView(
                 title: provider.title,
@@ -247,15 +248,13 @@ private struct BuiltInProviderSettingsView: View {
     }
 
     private var connectionStatus: some View {
-        LabeledContent("Состояние") {
-            Label(statusTitle, systemImage: statusIcon)
-                .foregroundStyle(statusColor)
-        }
+        ProviderConnectionDetails(selection: selection)
     }
 
     private var testButton: some View {
         Button {
-            Task { await testConnection() }
+            testTask?.cancel()
+            testTask = Task { await testConnection() }
         } label: {
             HStack {
                 if testState == .testing { ProgressView().controlSize(.small) }
@@ -286,33 +285,6 @@ private struct BuiltInProviderSettingsView: View {
         }
     }
 
-    private var statusTitle: String {
-        switch testState {
-        case .idle: hasStoredKey ? "Ключ сохранён" : "Нужен API-ключ"
-        case .testing: "Проверяю…"
-        case .success(let milliseconds): "Работает · \(milliseconds) мс"
-        case .failure: "Ошибка подключения"
-        }
-    }
-
-    private var statusIcon: String {
-        switch testState {
-        case .success: "checkmark.circle.fill"
-        case .failure: "exclamationmark.circle.fill"
-        case .testing: "hourglass"
-        case .idle: hasStoredKey ? "key.fill" : "key.slash"
-        }
-    }
-
-    private var statusColor: Color {
-        switch testState {
-        case .success: .green
-        case .failure: .red
-        case .testing: .indigo
-        case .idle: hasStoredKey ? .orange : .secondary
-        }
-    }
-
     private func load() {
         modelName = settings.modelName(for: selection)
         inputRate = settings.inputRateRUB(for: selection)
@@ -326,19 +298,30 @@ private struct BuiltInProviderSettingsView: View {
     }
 
     private func testConnection() async {
+        guard !Task.isCancelled else { return }
         settings.setModelName(modelName, for: selection)
         testState = .testing
         do {
-            testState = .success(milliseconds: try await runProviderTest(selection, settings: settings))
+            let milliseconds = try await runProviderTest(selection, settings: settings)
+            guard !Task.isCancelled else { return }
+            testState = .success(milliseconds: milliseconds)
         } catch {
+            guard !Task.isCancelled else { return }
             testState = .failure(error.localizedDescription)
         }
+    }
+
+    private func cancelTest() {
+        testTask?.cancel()
+        testTask = nil
+        testState = .idle
     }
 }
 
 private struct CustomProviderSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     let providerID: UUID
 
     @State private var draft = CustomProviderProfile()
@@ -346,6 +329,13 @@ private struct CustomProviderSettingsView: View {
     @State private var hasStoredKey = false
     @State private var testState: ProviderTestState = .idle
     @State private var confirmDelete = false
+    @State private var validationMessage: String?
+    @State private var testTask: Task<Void, Never>?
+
+    private var isSaved: Bool { settings.customProviders.contains { $0.id == providerID } }
+    private var hasUnsavedChanges: Bool {
+        settings.customProviders.first { $0.id == providerID } != draft
+    }
 
     var body: some View {
         Form {
@@ -368,12 +358,6 @@ private struct CustomProviderSettingsView: View {
                     }
                 }
 
-                Button("Заполнить для CheapVibeCode") {
-                    draft.displayName = "CheapVibeCode"
-                    draft.baseURL = "https://ru.cheapvibecode.ru"
-                    draft.protocolKind = .openAIChatCompletions
-                    draft.authScheme = .bearer
-                }
             } header: {
                 Text("Провайдер")
             } footer: {
@@ -406,18 +390,20 @@ private struct CustomProviderSettingsView: View {
             }
 
             Section {
-                LabeledContent("Состояние") {
-                    Label(statusTitle, systemImage: statusIcon)
-                        .foregroundStyle(statusColor)
+                if hasUnsavedChanges {
+                    Label("Настройки не сохранены", systemImage: "pencil.circle")
+                        .foregroundStyle(.orange)
+                } else {
+                    ProviderConnectionDetails(selection: draft.selection)
                 }
 
-                Button(hasStoredKey ? "Заменить API-ключ" : "Добавить API-ключ") {
-                    saveDraft()
-                    showKeyEditor = true
+                Button(hasStoredKey ? "Сохранить и заменить API-ключ" : "Сохранить и добавить API-ключ") {
+                    if saveDraft() { showKeyEditor = true }
                 }
 
                 Button {
-                    Task { await testConnection() }
+                    testTask?.cancel()
+                    testTask = Task { await testConnection() }
                 } label: {
                     HStack {
                         if testState == .testing { ProgressView().controlSize(.small) }
@@ -434,10 +420,13 @@ private struct CustomProviderSettingsView: View {
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
+                if let validationMessage {
+                    Text(validationMessage).font(.footnote).foregroundStyle(.red)
+                }
             } header: {
                 Text("Подключение")
             } footer: {
-                Text("Ключ хранится отдельно от остальных провайдеров в Keychain этого iPhone.")
+                Text("Ключ хранится отдельно от остальных провайдеров в Keychain этого iPhone. Проверка отправляет короткий платный запрос и ждёт его полного завершения.")
             }
 
             Section {
@@ -449,20 +438,25 @@ private struct CustomProviderSettingsView: View {
                 Text("Приватность")
             }
 
-            Section {
-                Button("Удалить провайдера", role: .destructive) {
-                    confirmDelete = true
+            if isSaved {
+                Section {
+                    Button("Удалить провайдера", role: .destructive) {
+                        confirmDelete = true
+                    }
                 }
             }
         }
         .navigationTitle(draft.displayName)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Сохранить") { saveDraft() }
+                Button("Сохранить") { if saveDraft() { dismiss() } }
             }
         }
         .task { load() }
-        .onDisappear { saveDraft() }
+        .onDisappear(perform: cancelTest)
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { cancelTest() }
+        }
         .sheet(isPresented: $showKeyEditor, onDismiss: refreshKeyStatus) {
             KeyEditorView(
                 title: draft.displayName,
@@ -477,48 +471,38 @@ private struct CustomProviderSettingsView: View {
         }
     }
 
-    private var statusTitle: String {
-        switch testState {
-        case .idle: hasStoredKey ? "Ключ сохранён" : "Нужен API-ключ"
-        case .testing: "Проверяю…"
-        case .success(let milliseconds): "Работает · \(milliseconds) мс"
-        case .failure: "Ошибка подключения"
-        }
-    }
-
-    private var statusIcon: String {
-        switch testState {
-        case .success: "checkmark.circle.fill"
-        case .failure: "exclamationmark.circle.fill"
-        case .testing: "hourglass"
-        case .idle: hasStoredKey ? "key.fill" : "key.slash"
-        }
-    }
-
-    private var statusColor: Color {
-        switch testState {
-        case .success: .green
-        case .failure: .red
-        case .testing: .indigo
-        case .idle: hasStoredKey ? .orange : .secondary
-        }
-    }
-
     private func load() {
         if let profile = settings.customProviders.first(where: { $0.id == providerID }) {
             draft = profile
+        } else {
+            draft = CustomProviderProfile(id: providerID)
         }
         refreshKeyStatus()
     }
 
-    private func saveDraft() {
+    @discardableResult
+    private func saveDraft() -> Bool {
         draft.displayName = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if draft.displayName.isEmpty { draft.displayName = "Свой API" }
         draft.baseURL = draft.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.modelName = draft.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !draft.displayName.isEmpty, !draft.modelName.isEmpty,
+              let url = URL(string: draft.baseURL), url.scheme?.lowercased() == "https",
+              url.host != nil, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil else {
+            validationMessage = "Заполните название, ID модели и HTTPS-адрес без ключа, пароля и параметров запроса. Затем добавьте API-ключ."
+            return false
+        }
         draft.inputRateRUB = max(0, draft.inputRateRUB)
         draft.outputRateRUB = max(0, draft.outputRateRUB)
-        settings.updateCustomProvider(draft)
+        let previous = settings.customProviders.first { $0.id == providerID }
+        settings.createCustomProvider(draft)
+        if previous?.baseURL != draft.baseURL || previous?.modelName != draft.modelName
+            || previous?.protocolKind != draft.protocolKind || previous?.authScheme != draft.authScheme {
+            settings.markConnectionUnverified(draft.selection)
+            testState = .idle
+        }
+        validationMessage = nil
+        return true
     }
 
     private func refreshKeyStatus() {
@@ -527,19 +511,34 @@ private struct CustomProviderSettingsView: View {
     }
 
     private func testConnection() async {
-        saveDraft()
+        guard !Task.isCancelled else { return }
+        guard saveDraft() else { return }
         testState = .testing
         do {
-            testState = .success(milliseconds: try await runProviderTest(draft.selection, settings: settings))
+            let milliseconds = try await runProviderTest(draft.selection, settings: settings)
+            guard !Task.isCancelled else { return }
+            testState = .success(milliseconds: milliseconds)
         } catch {
+            guard !Task.isCancelled else { return }
             testState = .failure(error.localizedDescription)
         }
     }
 
+    private func cancelTest() {
+        testTask?.cancel()
+        testTask = nil
+        testState = .idle
+    }
+
     private func deleteProvider() {
-        try? KeychainStore().delete(account: draft.keychainAccount)
-        settings.deleteCustomProvider(id: providerID)
-        dismiss()
+        cancelTest()
+        do {
+            try KeychainStore().delete(account: draft.keychainAccount)
+            settings.deleteCustomProvider(id: providerID)
+            dismiss()
+        } catch {
+            validationMessage = "Не удалось удалить API-ключ из Keychain. Провайдер оставлен в настройках; попробуйте снова."
+        }
     }
 }
 
@@ -694,32 +693,16 @@ private func runProviderTest(
     _ selection: ProviderSelection,
     settings: AppSettings
 ) async throws -> Int {
-    let client = ProviderRegistry(settings: settings).provider(
-        selection,
-        honorMockMode: false
-    )
-    let request = AIRequest(
-        question: "Ответь одним словом: работает?",
-        context: [],
-        mode: .concise,
-        imageJPEG: nil,
-        maxOutputTokens: 12,
-        systemPrompt: settings.systemPrompt
-    )
-    let clock = ContinuousClock()
-    let started = clock.now
-    for try await event in client.stream(request: request) {
-        if case .textDelta(let text) = event, !text.isEmpty {
-            return started.duration(to: clock.now).milliseconds
-        }
+    let report = await ProviderConnectionChecker.check(selection: selection, settings: settings)
+    guard report.state == .verified else {
+        throw ProviderTestFailure(category: report.errorCategory)
     }
-    throw AIProviderError.emptyResponse
+    return report.firstTokenMilliseconds ?? 0
 }
 
-private extension Duration {
-    var milliseconds: Int {
-        let components = self.components
-        return Int(components.seconds * 1_000)
-            + Int(components.attoseconds / 1_000_000_000_000_000)
+private struct ProviderTestFailure: LocalizedError {
+    let category: String?
+    var errorDescription: String? {
+        ProviderFailure.message(forCategory: category)
     }
 }

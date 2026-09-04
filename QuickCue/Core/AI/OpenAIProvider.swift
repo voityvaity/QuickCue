@@ -42,21 +42,14 @@ struct OpenAIProvider: AIProvider {
                         body: body,
                         headers: ["Authorization": "Bearer \(key)"]
                     )
+                    var validator = StreamCompletionValidator()
                     for try await message in transport.stream(urlRequest) {
-                        guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { continue }
-                        if type == "response.output_text.delta", let delta = json["delta"] as? String {
-                            continuation.yield(.textDelta(delta))
-                        } else if type == "response.completed" {
-                            if let response = json["response"] as? [String: Any],
-                               let usage = response["usage"] as? [String: Any] {
-                                continuation.yield(.usage(TokenUsage(
-                                    inputTokens: JSONValue.int(usage["input_tokens"]),
-                                    outputTokens: JSONValue.int(usage["output_tokens"])
-                                )))
-                            }
-                            continuation.yield(.completed)
+                        for event in try parseResponsesEvent(message) {
+                            validator.observe(event)
+                            continuation.yield(event)
                         }
                     }
+                    try validator.validate()
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }

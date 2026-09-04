@@ -3,44 +3,29 @@ import SwiftUI
 
 @main
 struct QuickCueApp: App {
-    private let container: ModelContainer
     @StateObject private var settings: AppSettings
-    @StateObject private var sessionStore: SessionStore
+    @StateObject private var persistence: PersistenceController
 
     init() {
-        let schema = Schema([
-            SessionRecord.self,
-            TranscriptRecord.self,
-            AnswerRecord.self,
-            PhotoRecord.self,
-            UsageRecord.self,
-            ConversationMessageRecord.self,
-        ])
-
-        do {
-            let container = try ModelContainer(for: schema)
-            self.container = container
-
-            let settings = AppSettings()
-            _settings = StateObject(wrappedValue: settings)
-            _sessionStore = StateObject(
-                wrappedValue: SessionStore(
-                    modelContext: ModelContext(container),
-                    settings: settings
-                )
-            )
-        } catch {
-            fatalError("Не удалось открыть локальную базу QuickCue: \(error)")
-        }
+        let settings = AppSettings()
+        _settings = StateObject(wrappedValue: settings)
+        _persistence = StateObject(wrappedValue: PersistenceController(settings: settings))
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(settings)
-                .environmentObject(sessionStore)
+            Group {
+                if let container = persistence.container, let sessionStore = persistence.sessionStore {
+                    RootView()
+                        .environmentObject(settings)
+                        .environmentObject(sessionStore)
+                        .modelContainer(container)
+                } else {
+                    StorageRecoveryView(retry: persistence.open)
+                }
+            }
+            .preferredColorScheme(settings.appearance == .light ? .light : nil)
         }
-        .modelContainer(container)
     }
 }
 

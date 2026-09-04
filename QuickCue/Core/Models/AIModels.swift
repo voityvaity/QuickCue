@@ -58,7 +58,11 @@ enum CustomProviderProtocol: String, CaseIterable, Codable, Identifiable, Sendab
     case openAIChatCompletions
 
     var id: String { rawValue }
-    var title: String { "OpenAI Chat Completions" }
+    var title: String {
+        switch self {
+        case .openAIChatCompletions: "OpenAI Chat Completions"
+        }
+    }
 }
 
 enum CustomAuthScheme: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -107,6 +111,55 @@ struct CustomProviderProfile: Codable, Hashable, Identifiable, Sendable {
 
     var selection: ProviderSelection { .custom(id) }
     var keychainAccount: String { "api-key.custom.\(id.uuidString.lowercased())" }
+
+}
+
+enum ProviderConnectionState: String, Codable, Sendable {
+    case unconfigured
+    case unverified
+    case verified
+    case failed
+}
+
+struct ProviderConnectionReport: Codable, Equatable, Sendable {
+    var state: ProviderConnectionState
+    var modelName: String
+    var checkedAt: Date?
+    var firstTokenMilliseconds: Int?
+    var totalMilliseconds: Int?
+    var errorCategory: String?
+
+    static let unconfigured = Self(
+        state: .unconfigured,
+        modelName: "",
+        checkedAt: nil,
+        firstTokenMilliseconds: nil,
+        totalMilliseconds: nil,
+        errorCategory: nil
+    )
+}
+
+enum AppAppearance: String, CaseIterable, Codable, Identifiable, Sendable {
+    case light
+    case system
+
+    var id: String { rawValue }
+    var title: String { self == .light ? "Светлое" : "Как в системе" }
+}
+
+enum PromptProfileKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case live
+    case conversation
+    case photo
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .live: "Эфир"
+        case .conversation: "Диалог"
+        case .photo: "Код и фото"
+        }
+    }
 }
 
 enum AnswerMode: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -131,6 +184,7 @@ enum AnswerStatus: String, Codable, Sendable {
     case streaming
     case completed
     case failed
+    case cancelled
 }
 
 struct ConversationTurn: Codable, Hashable, Sendable {
@@ -189,15 +243,17 @@ enum AIProviderError: LocalizedError {
     case badResponse(Int, String)
     case unsupportedImage(ProviderKind)
     case emptyResponse
+    case incompleteResponse
 
     var errorDescription: String? {
         switch self {
         case .missingCredential(let provider):
             "Для \(provider.title) не сохранён ключ. Добавьте его в Настройках или включите Mock."
         case .invalidConfiguration(let detail): detail
-        case .badResponse(let code, let detail): "API вернул \(code): \(detail)"
+        case .badResponse(let code, _): ProviderFailure.message(forHTTPStatus: code)
         case .unsupportedImage(let provider): "\(provider.title) не настроен для прямого анализа изображения."
         case .emptyResponse: "Провайдер завершил запрос без текста."
+        case .incompleteResponse: "Ответ оборвался до подтверждения завершения. Частичный текст сохранён — можно повторить запрос."
         }
     }
 }

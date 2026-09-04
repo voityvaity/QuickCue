@@ -10,12 +10,17 @@ struct QuestionDetector: Sendable {
     private let strongStarts = [
         "кто", "что", "где", "когда", "куда", "откуда", "почему", "зачем", "как",
         "какой", "какая", "какие", "сколько", "чей", "можно ли", "нужно ли",
+        "в чем", "в чём", "каким образом", "чем отличается", "чем отличаются",
+        "верно ли", "правда ли", "есть ли", "бывает ли", "согласны ли",
+        "можете объяснить", "можете рассказать", "можете привести", "можешь объяснить",
+        "не могли бы", "скажите", "подскажите",
         "расскажи", "расскажите", "объясни", "объясните", "покажи", "покажите",
         "напиши", "напишите", "реши", "решите", "найди", "найдите", "сравни", "сравните",
+        "опиши", "опишите", "назови", "назовите", "приведи", "приведите", "перечисли", "перечислите",
     ]
 
     private let weakSignals = [
-        "ли ", "верно что", "правда что", "в чем", "в чём", "каким образом",
+        " ли ", "верно что", "правда что", "в чем", "в чём", "каким образом",
         "что будет если", "что выведет", "как работает", "в чем разница", "в чём разница",
     ]
 
@@ -23,7 +28,8 @@ struct QuestionDetector: Sendable {
         let text = rawText
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        let lower = text.lowercased()
+        let lower = text.lowercased().replacingOccurrences(of: ",", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         guard text.count >= 5 else { return .init(normalizedText: text, confidence: 0, isQuestion: false) }
 
         var score = 0.0
@@ -33,6 +39,8 @@ struct QuestionDetector: Sendable {
         if lower.contains(" или ") { score += 0.08 }
         if text.split(separator: " ").count >= 4 { score += 0.07 }
         if lower.hasPrefix("я думаю") || lower.hasPrefix("мне кажется") { score -= 0.18 }
+        if !text.hasSuffix("?"), ["что касается", "как оказалось", "как я уже говорил", "как мы договорились"]
+            .contains(where: { lower.hasPrefix($0) }) { score -= 0.48 }
 
         let confidence = min(max(score, 0), 1)
         return QuestionDetection(normalizedText: text, confidence: confidence, isQuestion: confidence >= 0.48)

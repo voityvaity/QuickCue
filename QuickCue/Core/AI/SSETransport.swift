@@ -17,20 +17,14 @@ struct SSETransport: Sendable {
                         throw AIProviderError.badResponse(-1, "Некорректный HTTP-ответ")
                     }
                     guard (200...299).contains(http.statusCode) else {
-                        var payload = ""
-                        var lineCount = 0
-                        for try await line in bytes.lines {
-                            payload += line
-                            lineCount += 1
-                            if lineCount >= 20 { break }
-                        }
-                        throw AIProviderError.badResponse(http.statusCode, String(payload.prefix(500)))
+                        // A gateway may echo private prompts or credentials in its error body.
+                        throw AIProviderError.badResponse(http.statusCode, "http_error")
                     }
 
                     var eventName: String?
                     var dataLines: [String] = []
                     for try await line in bytes.lines {
-                        if Task.isCancelled { break }
+                        try Task.checkCancellation()
                         if line.isEmpty {
                             if !dataLines.isEmpty {
                                 continuation.yield(SSEMessage(event: eventName, data: dataLines.joined(separator: "\n")))
@@ -48,7 +42,7 @@ struct SSETransport: Sendable {
                     }
                     continuation.finish()
                 } catch is CancellationError {
-                    continuation.finish()
+                    continuation.finish(throwing: CancellationError())
                 } catch {
                     continuation.finish(throwing: error)
                 }

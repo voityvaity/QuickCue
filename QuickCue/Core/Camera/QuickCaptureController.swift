@@ -37,6 +37,13 @@ final class QuickCaptureController: ObservableObject {
     private let camera = CameraService()
     private let textRecognizer = TextRecognizer()
     private let photoStore = PhotoStore()
+    private var generation = 0
+
+    func cancel() {
+        generation += 1
+        camera.stop()
+        phase = .idle
+    }
 
     func capture(
         store: SessionStore,
@@ -44,20 +51,26 @@ final class QuickCaptureController: ObservableObject {
         includeInConversation: Bool
     ) async {
         guard !phase.isBusy else { return }
+        let operation = generation
+        guard let sessionID = store.preparePhotoSession() else { return }
         do {
             phase = .preparing
             await camera.configure()
+            try checkActive(operation: operation, sessionID: sessionID, store: store)
             guard camera.isConfigured else {
                 throw CameraError.configuration
             }
 
             phase = .capturing
             let jpeg = try await camera.capture()
+            try checkActive(operation: operation, sessionID: sessionID, store: store)
+            completionCounter += 1
             camera.stop()
 
             phase = .recognizing
             let recognizedText = try await textRecognizer.recognize(jpeg: jpeg)
-            let sessionID = store.registerPhoto()
+            try checkActive(operation: operation, sessionID: sessionID, store: store)
+            guard store.registerPhoto(sessionID: sessionID) else { throw CancellationError() }
             let path = try photoStore.saveJPEG(jpeg)
             let photo = PhotoRecord(
                 sessionID: sessionID,
@@ -65,26 +78,37 @@ final class QuickCaptureController: ObservableObject {
                 recognizedText: recognizedText
             )
             modelContext.insert(photo)
+            try modelContext.save()
 
             phase = .answering
             if let answer = await store.answerPhoto(
-                jpeg: jpeg,
+                jpeg: try ImageUploadPreparation.prepare(jpeg: jpeg),
                 recognizedText: recognizedText,
                 includeInConversation: includeInConversation,
-                photoRelativePath: path
+                photoRelativePath: path,
+                expectedSessionID: sessionID
             ) {
                 photo.answerID = answer.id
                 photo.sessionID = answer.sessionID
             }
             try modelContext.save()
+            try checkActive(operation: operation, sessionID: sessionID, store: store)
             phase = .finished
-            completionCounter += 1
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            if phase == .finished { phase = .idle }
+            if operation == generation, phase == .finished { phase = .idle }
+        } catch is CancellationError {
+            if operation == generation { camera.stop(); phase = .idle }
         } catch {
-            camera.stop()
-            phase = .idle
-            errorMessage = error.localizedDescription
+            if operation == generation {
+                camera.stop()
+                phase = .idle
+                errorMessage = error.localizedDescription
+            }
         }
+    }
+
+    private func checkActive(operation: Int, sessionID: UUID, store: SessionStore) throws {
+        try Task.checkCancellation()
+        guard operation == generation, store.currentSession?.id == sessionID else { throw CancellationError() }
     }
 }

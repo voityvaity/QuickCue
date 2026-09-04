@@ -12,7 +12,8 @@ struct ProviderRegistry {
 
     func provider(
         _ requested: ProviderSelection,
-        honorMockMode: Bool = true
+        honorMockMode: Bool = true,
+        snapshotCredentials: Bool = false
     ) -> any AIProvider {
         let selection: ProviderSelection = honorMockMode && settings.mockMode
             ? .builtIn(.mock)
@@ -20,8 +21,11 @@ struct ProviderRegistry {
         let kind = selection.kind
         let model = settings.modelName(for: selection)
         let account = settings.customProvider(for: selection)?.keychainAccount ?? kind.keychainAccount
-        let reader: CredentialReader = { [secretStore] in
-            try secretStore.read(account: account)
+        let reader: CredentialReader
+        if snapshotCredentials, kind != .mock {
+            reader = Self.snapshotCredential(account: account, from: secretStore)
+        } else {
+            reader = { [secretStore] in try secretStore.read(account: account) }
         }
 
         switch kind {
@@ -73,6 +77,13 @@ struct ProviderRegistry {
         honorMockMode: Bool = true
     ) -> any AIProvider {
         provider(.builtIn(requested), honorMockMode: honorMockMode)
+    }
+
+    /// Queue a key and endpoint as one configuration. A later key edit must not
+    /// send the new secret to the endpoint captured by an older queued request.
+    static func snapshotCredential(account: String, from store: SecretStore) -> CredentialReader {
+        let snapshot = Result { try store.read(account: account) }
+        return { try snapshot.get() }
     }
 }
 

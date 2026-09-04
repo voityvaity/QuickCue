@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 struct LiveView: View {
@@ -5,6 +6,7 @@ struct LiveView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var manualQuestion = ""
     @State private var showManualInput = false
+    @Query private var usage: [UsageRecord]
 
     var body: some View {
         NavigationStack {
@@ -57,7 +59,7 @@ struct LiveView: View {
                 Text("·")
                 Text("\(session.questionCount) вопросов")
                 Text("·")
-                Text(session.estimatedCostRUB.formatted(.currency(code: "RUB")))
+                Text(UsageCostSummary(records: usage.filter { $0.sessionID == session.id }).title)
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
@@ -83,19 +85,21 @@ struct LiveView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(settings.mockMode ? "Тестовый режим" : settings.providerTitle(for: settings.primaryProvider))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(settings.mockMode ? Color.orange : Color.green)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(
-                            (settings.mockMode ? Color.orange : Color.green).opacity(0.1),
-                            in: Capsule()
-                        )
+                    if settings.mockMode {
+                        Label("Тестовый режим · без сети", systemImage: "testtube.2")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(settings.providerTitle(for: settings.primaryProvider))
+                            .font(.caption.weight(.semibold))
+                        ProviderConnectionBadge(selection: settings.primaryProvider)
+                    }
                 }
                 Spacer(minLength: 4)
                 QuickCaptureButton(presentation: .compact)
             }
+
+            PhotoTransferDisclosure(compact: true)
 
             if !store.liveTranscript.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
