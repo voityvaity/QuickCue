@@ -8,6 +8,7 @@ struct QuickCueApp: App {
 
     init() {
         let settings = AppSettings()
+        ProviderSetupRecoveryStore().recoverIfNeeded(settings: settings, secretStore: KeychainStore())
         _settings = StateObject(wrappedValue: settings)
         _persistence = StateObject(wrappedValue: PersistenceController(settings: settings))
     }

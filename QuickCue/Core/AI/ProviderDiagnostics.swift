@@ -91,6 +91,8 @@ enum ProviderFailure {
         case "incomplete_response": return AIProviderError.incompleteResponse.localizedDescription
         case "empty_response": return AIProviderError.emptyResponse.localizedDescription
         case "cancelled": return "Проверка отменена."
+        case "credential_storage": return "Не удалось безопасно прочитать временный ключ из Keychain. Добавьте его ещё раз."
+        case "setup_commit": return "Ключ проверен, но настройку не удалось завершить. QuickCue повторит безопасное восстановление при следующем запуске."
         default: return "Проверьте ключ, ID модели, адрес сервиса и платёжный аккаунт."
         }
     }

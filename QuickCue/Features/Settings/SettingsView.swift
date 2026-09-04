@@ -28,6 +28,13 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        ProviderSetupView(settings: settings)
+                    } label: {
+                        Label("Подключить AI за три шага", systemImage: "bolt.badge.checkmark.fill")
+                            .fontWeight(.semibold)
+                    }
+
                     ForEach(builtInProviders) { provider in
                         NavigationLink {
                             BuiltInProviderSettingsView(provider: provider)
@@ -60,7 +67,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Подключение AI")
                 } footer: {
-                    Text("Можно добавить несколько OpenAI-совместимых сервисов. У каждого будут отдельные адрес, модель, тарифы и ключ в Keychain.")
+                    Text("В быстром подключении достаточно выбрать сервис и добавить ключ. Ниже остаются подробные настройки и возможность добавить несколько OpenAI Chat Completions-совместимых сервисов со своим адресом.")
                 }
 
                 Section("Поведение QuickCue") {

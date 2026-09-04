@@ -200,6 +200,27 @@ final class AppSettings: ObservableObject {
         connectionReports[selection.rawValue] = report
     }
 
+    /// Final step of the guided setup. The candidate secret has already been
+    /// verified and copied to the provider's stable Keychain account.
+    func activateVerifiedProvider(
+        _ selection: ProviderSelection,
+        modelName: String,
+        yandexFolderID: String?,
+        report: ProviderConnectionReport
+    ) {
+        guard selection.customID == nil, selection.kind != .mock, selection.kind != .custom else { return }
+        setModelName(modelName, for: selection)
+        if selection.kind == .yandexGPT, let yandexFolderID {
+            self.yandexFolderID = yandexFolderID
+        }
+        // A key replacement is a configuration revision even when the model
+        // did not change. This invalidates callbacks from older checks.
+        markConnectionUnverified(selection)
+        setConnectionReport(report, for: selection)
+        primaryProvider = selection
+        mockMode = false
+    }
+
     func markConnectionUnverified(_ selection: ProviderSelection) {
         configurationRevisions[selection.rawValue, default: 0] += 1
         let hasConfiguration = !modelName(for: selection).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

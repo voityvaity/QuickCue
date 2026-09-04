@@ -5,6 +5,8 @@ import UIKit
 struct KeyEditorView: View {
     let title: String
     let keychainAccount: String
+    private let marksConnectionChanged: Bool
+    private let onSaved: ((String) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -22,6 +24,18 @@ struct KeyEditorView: View {
     @State private var scanTask: Task<Void, Never>?
     @State private var scanGeneration = UUID()
     private let keychain = KeychainStore()
+
+    init(
+        title: String,
+        keychainAccount: String,
+        marksConnectionChanged: Bool = true,
+        onSaved: ((String) -> Void)? = nil
+    ) {
+        self.title = title
+        self.keychainAccount = keychainAccount
+        self.marksConnectionChanged = marksConnectionChanged
+        self.onSaved = onSaved
+    }
 
     var body: some View {
         NavigationStack {
@@ -50,7 +64,12 @@ struct KeyEditorView: View {
                     }
 
                     if hasStoredKey {
-                        Label("Ключ сохранён в Keychain этого iPhone", systemImage: "checkmark.shield.fill")
+                        Label(
+                            marksConnectionChanged
+                                ? "Ключ сохранён в Keychain этого iPhone"
+                                : "Ключ подготовлен для проверки",
+                            systemImage: "checkmark.shield.fill"
+                        )
                             .foregroundStyle(.green)
                     }
 
@@ -113,7 +132,10 @@ struct KeyEditorView: View {
                             do {
                                 try keychain.delete(account: keychainAccount)
                                 hasStoredKey = false
-                                ProviderConnectionStatusStore.keyChanged(account: keychainAccount, settings: settings)
+                                if marksConnectionChanged {
+                                    ProviderConnectionStatusStore.keyChanged(account: keychainAccount, settings: settings)
+                                }
+                                onSaved?(keychainAccount)
                             } catch {
                                 errorMessage = error.localizedDescription
                             }
@@ -175,7 +197,10 @@ struct KeyEditorView: View {
             let value = key.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty else { return }
             try keychain.save(value, account: keychainAccount)
-            ProviderConnectionStatusStore.keyChanged(account: keychainAccount, settings: settings)
+            if marksConnectionChanged {
+                ProviderConnectionStatusStore.keyChanged(account: keychainAccount, settings: settings)
+            }
+            onSaved?(keychainAccount)
             key = ""
             hasStoredKey = true
             dismiss()

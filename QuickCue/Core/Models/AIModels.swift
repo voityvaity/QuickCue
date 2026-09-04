@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
+enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
     case mock
     case openAI
     case deepSeek
