@@ -8,7 +8,7 @@ final class ProviderStreamParsingTests: XCTestCase {
     }
 
     func testResponsesCompletionIncludesUsageBeforeCompletion() throws {
-        let events = try parseResponsesEvent(SSEMessage(event: nil, data: #"{"type":"response.completed","response":{"usage":{"input_tokens":30,"output_tokens":12}}}"#))
+        let events = try parseResponsesEvent(SSEMessage(event: nil, data: #"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":30,"output_tokens":12}}}"#))
         XCTAssertEqual(events.count, 2)
         guard case .usage(let usage) = events[0], case .completed = events[1] else {
             return XCTFail("Expected usage then completion")
@@ -19,7 +19,7 @@ final class ProviderStreamParsingTests: XCTestCase {
     func testAnthropicKeepsInputUsageAcrossMessageDelta() throws {
         var decoder = AnthropicStreamDecoder()
         _ = try decoder.events(for: SSEMessage(event: nil, data: #"{"type":"message_start","message":{"usage":{"input_tokens":40,"cache_read_input_tokens":10,"output_tokens":1}}}"#))
-        let events = try decoder.events(for: SSEMessage(event: nil, data: #"{"type":"message_delta","usage":{"output_tokens":17}}"#))
+        let events = try decoder.events(for: SSEMessage(event: nil, data: #"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":17}}"#))
         guard let event = events.first, case .usage(let usage) = event else { return XCTFail("Missing usage") }
         XCTAssertEqual(usage, TokenUsage(inputTokens: 50, outputTokens: 17))
     }
@@ -33,21 +33,21 @@ final class ProviderStreamParsingTests: XCTestCase {
     }
 
     func testMissingUsageIsNotReportedAsZeroTokens() throws {
-        let chat = parseChatCompletionEvent(SSEMessage(event: nil, data: #"{"usage":{}}"#))
+        let chat = try parseChatCompletionEvent(SSEMessage(event: nil, data: #"{"usage":{}}"#))
         XCTAssertTrue(chat.isEmpty)
-        let response = try parseResponsesEvent(SSEMessage(event: nil, data: #"{"type":"response.completed","response":{"usage":{}}}"#))
+        let response = try parseResponsesEvent(SSEMessage(event: nil, data: #"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#))
         XCTAssertEqual(response.count, 1)
         guard case .completed = response[0] else { return XCTFail("Only completion expected") }
         var decoder = AnthropicStreamDecoder()
         XCTAssertTrue(try decoder.events(for: SSEMessage(event: nil, data: #"{"type":"message_start","message":{"usage":{}}}"#)).isEmpty)
-        XCTAssertTrue(try decoder.events(for: SSEMessage(event: nil, data: #"{"type":"message_delta","usage":{"output_tokens":5}}"#)).isEmpty)
+        XCTAssertTrue(try decoder.events(for: SSEMessage(event: nil, data: #"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}"#)).isEmpty)
     }
 
-    func testMalformedTokenCountsAreUnknown() {
+    func testMalformedTokenCountsAreUnknown() throws {
         for data in [#"{"usage":{"prompt_tokens":true,"completion_tokens":5}}"#,
                      #"{"usage":{"prompt_tokens":1.5,"completion_tokens":5}}"#,
                      #"{"usage":{"prompt_tokens":-1,"completion_tokens":5}}"#] {
-            XCTAssertTrue(parseChatCompletionEvent(SSEMessage(event: nil, data: data)).isEmpty)
+            XCTAssertTrue(try parseChatCompletionEvent(SSEMessage(event: nil, data: data)).isEmpty)
         }
     }
 

@@ -50,12 +50,16 @@ func compatibleStream(
                     headers: requestHeaders
                 )
                 var validator = StreamCompletionValidator()
-                for try await message in transport.stream(urlRequest) {
-                    for event in try validatedChatCompletionEvents(message) {
+                defer { LatencyLogger().streamSummary(provider: provider, requestID: request.id, validator: validator) }
+                var decoder = ChatCompletionStreamDecoder()
+                streamLoop: for try await message in transport.stream(urlRequest, requestID: request.id) {
+                    for event in try decoder.events(for: message) {
                         validator.observe(event)
                         continuation.yield(event)
+                        if case .completed = event { break streamLoop }
                     }
                 }
+                try decoder.finish()
                 try validator.validate()
                 continuation.finish()
             } catch { continuation.finish(throwing: error) }

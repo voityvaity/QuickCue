@@ -57,9 +57,20 @@ func openAICompatibleBody(request: AIRequest, model: String) -> [String: Any] {
     ]
 }
 
-func parseChatCompletionEvent(_ message: SSEMessage) -> [AIStreamEvent] {
+func parseChatCompletionEvent(_ message: SSEMessage) throws -> [AIStreamEvent] {
+    if let event = message.event, !["message", "error"].contains(event) { return [] }
     if message.data == "[DONE]" { return [.completed] }
-    guard let json = JSONValue.object(message.data) else { return [] }
+    if message.data.isEmpty { return [] }
+    guard let json = JSONValue.object(message.data) else { throw StreamFailure.malformedEvent }
+    if message.event == "error" || json["error"] != nil { throw AIProviderError.badResponse(200, "stream_error") }
+    if let choices = json["choices"], !(choices is [[String: Any]]) { throw StreamFailure.malformedEvent }
+    if let choice = (json["choices"] as? [[String: Any]])?.first {
+        if let delta = choice["delta"], !(delta is [String: Any]) { throw StreamFailure.malformedEvent }
+        if let content = (choice["delta"] as? [String: Any])?["content"], !(content is NSNull), !(content is String) {
+            throw StreamFailure.malformedEvent
+        }
+        if let reason = choice["finish_reason"], !(reason is NSNull), !(reason is String) { throw StreamFailure.malformedEvent }
+    }
     var events: [AIStreamEvent] = []
     if let choices = json["choices"] as? [[String: Any]],
        let delta = choices.first?["delta"] as? [String: Any],
@@ -81,45 +92,67 @@ func parseChatCompletionEvent(_ message: SSEMessage) -> [AIStreamEvent] {
 struct StreamCompletionValidator {
     private(set) var hasText = false
     private(set) var completed = false
+    private(set) var textEvents = 0
+    private(set) var usageEvents = 0
 
     mutating func observe(_ event: AIStreamEvent) {
         switch event {
-        case .textDelta(let text): hasText = hasText || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .textDelta(let text):
+            textEvents += 1
+            hasText = hasText || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .completed: completed = true
-        case .usage: break
+        case .usage: usageEvents += 1
         }
     }
 
     func validate() throws {
         try Task.checkCancellation()
-        guard hasText else { throw AIProviderError.emptyResponse }
         guard completed else { throw AIProviderError.incompleteResponse }
+        guard hasText else { throw AIProviderError.emptyResponse }
     }
 }
 
 func validatedChatCompletionEvents(_ message: SSEMessage) throws -> [AIStreamEvent] {
-    if let json = JSONValue.object(message.data), json["error"] != nil {
-        throw AIProviderError.badResponse(200, "stream_error")
-    }
-    return parseChatCompletionEvent(message)
+    try parseChatCompletionEvent(message)
 }
 
 func parseResponsesEvent(_ message: SSEMessage) throws -> [AIStreamEvent] {
-    guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { return [] }
+    guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { throw StreamFailure.malformedEvent }
     switch type {
     case "response.output_text.delta":
-        return (json["delta"] as? String).map { [.textDelta($0)] } ?? []
+        guard let delta = json["delta"] as? String else { throw StreamFailure.malformedEvent }
+        return [.textDelta(delta)]
     case "response.refusal.delta":
         return (json["delta"] as? String).map { [.textDelta($0)] } ?? []
     case "response.completed":
+        guard let response = json["response"] as? [String: Any],
+              response["status"] as? String == "completed" else {
+            throw StreamFailure.malformedEvent
+        }
         var events: [AIStreamEvent] = []
-        if let response = json["response"] as? [String: Any], let usage = response["usage"] as? [String: Any],
-           let input = JSONValue.tokenCount(usage["input_tokens"]), let output = JSONValue.tokenCount(usage["output_tokens"]) {
-            events.append(.usage(TokenUsage(inputTokens: input, outputTokens: output)))
+        if let rawUsage = response["usage"], !(rawUsage is NSNull) {
+            guard let usage = rawUsage as? [String: Any] else { throw StreamFailure.malformedEvent }
+            let rawInput = usage["input_tokens"]
+            let rawOutput = usage["output_tokens"]
+            if let rawInput, !(rawInput is NSNull), JSONValue.tokenCount(rawInput) == nil {
+                throw StreamFailure.malformedEvent
+            }
+            if let rawOutput, !(rawOutput is NSNull), JSONValue.tokenCount(rawOutput) == nil {
+                throw StreamFailure.malformedEvent
+            }
+            if let input = JSONValue.tokenCount(rawInput), let output = JSONValue.tokenCount(rawOutput) {
+                events.append(.usage(TokenUsage(inputTokens: input, outputTokens: output)))
+            }
         }
         events.append(.completed)
         return events
-    case "response.incomplete": throw AIProviderError.incompleteResponse
+    case "response.incomplete":
+        if let response = json["response"] as? [String: Any],
+           let detail = response["incomplete_details"] as? [String: Any] {
+            if detail["reason"] as? String == "max_output_tokens" { throw StreamFailure.outputLimit }
+            if detail["reason"] as? String == "content_filter" { throw StreamFailure.policyBlock }
+        }
+        throw AIProviderError.incompleteResponse
     case "response.failed", "error": throw AIProviderError.badResponse(200, "stream_error")
     default: return []
     }
@@ -128,9 +161,10 @@ func parseResponsesEvent(_ message: SSEMessage) throws -> [AIStreamEvent] {
 struct AnthropicStreamDecoder {
     private var inputTokens: Int?
     private var outputTokens: Int?
+    private var stopFailure: StreamFailure?
 
     mutating func events(for message: SSEMessage) throws -> [AIStreamEvent] {
-        guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { return [] }
+        guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { throw StreamFailure.malformedEvent }
         switch type {
         case "message_start":
             if let body = json["message"] as? [String: Any], let usage = body["usage"] as? [String: Any] {
@@ -151,13 +185,30 @@ struct AnthropicStreamDecoder {
                 return [.textDelta(text)]
             }
         case "message_delta":
-            if let usage = json["usage"] as? [String: Any] {
+            guard let delta = json["delta"] as? [String: Any],
+                  let reason = delta["stop_reason"] as? String else {
+                throw StreamFailure.malformedEvent
+            }
+            switch reason {
+            case "end_turn", "stop_sequence": break
+            case "max_tokens": stopFailure = .outputLimit
+            case "refusal": stopFailure = .policyBlock
+            case "tool_use": stopFailure = .unsupportedOutput
+            default: stopFailure = .unsupportedTermination
+            }
+            if let rawUsage = json["usage"], !(rawUsage is NSNull) {
+                guard let usage = rawUsage as? [String: Any] else { throw StreamFailure.malformedEvent }
+                if let rawOutput = usage["output_tokens"], !(rawOutput is NSNull), JSONValue.tokenCount(rawOutput) == nil {
+                    throw StreamFailure.malformedEvent
+                }
                 if let output = JSONValue.tokenCount(usage["output_tokens"]) { outputTokens = output }
                 if let inputTokens, let outputTokens {
                     return [.usage(TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens))]
                 }
             }
-        case "message_stop": return [.completed]
+        case "message_stop":
+            if let stopFailure { throw stopFailure }
+            return [.completed]
         case "error": throw AIProviderError.badResponse(200, "stream_error")
         default: break
         }

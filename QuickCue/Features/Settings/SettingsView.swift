@@ -111,6 +111,18 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                Section("О приложении") {
+                    LabeledContent("Версия", value: "\(BuildIdentity.current.version) (\(BuildIdentity.current.build))")
+                    LabeledContent("Ревизия", value: BuildIdentity.current.revisionTitle)
+                        .font(.footnote)
+                    ShareLink(item: BuildIdentity.current.diagnosticText) {
+                        Label("Поделиться номером сборки", systemImage: "square.and.arrow.up")
+                    }
+                    Text("Только версия и ревизия исходников. Без ключей, фотографий и содержимого разговоров.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Настройки")
             .navigationDestination(item: $createdProviderID) { id in

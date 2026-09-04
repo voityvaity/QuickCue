@@ -4,6 +4,10 @@ import os
 struct LatencyLogger: Sendable {
     private let logger = Logger(subsystem: "ru.quickcue.app", category: "latency")
 
+    func streamSummary(provider: ProviderKind, requestID: UUID, validator: StreamCompletionValidator) {
+        logger.info("stream request=\(requestID.uuidString, privacy: .public) provider=\(provider.rawValue, privacy: .public) text_events=\(validator.textEvents) usage_events=\(validator.usageEvents) terminal=\(validator.completed)")
+    }
+
     func firstToken(provider: ProviderKind, milliseconds: Int, requestID: UUID? = nil) {
         logger.info("first_token request=\(requestID?.uuidString ?? "none", privacy: .public) provider=\(provider.rawValue, privacy: .public) ms=\(milliseconds, privacy: .public)")
     }
@@ -21,6 +25,8 @@ struct LatencyLogger: Sendable {
 enum SafeErrorCode {
     static func classify(_ error: Error) -> String {
         if error is CancellationError { return "cancelled" }
+        if let failure = error as? StreamFailure { return failure.rawValue }
+        if let failure = error as? SSETransportFailure { return failure.safeCode }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .cancelled: return "cancelled"

@@ -128,6 +128,8 @@ struct ProviderConnectionReport: Codable, Equatable, Sendable {
     var firstTokenMilliseconds: Int?
     var totalMilliseconds: Int?
     var errorCategory: String?
+    var requestID: UUID? = nil
+    var buildIdentity: BuildIdentity? = nil
 
     static let unconfigured = Self(
         state: .unconfigured,

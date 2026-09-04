@@ -49,10 +49,12 @@ struct AnthropicProvider: AIProvider {
                     )
                     var decoder = AnthropicStreamDecoder()
                     var validator = StreamCompletionValidator()
-                    for try await message in transport.stream(urlRequest) {
+                    defer { LatencyLogger().streamSummary(provider: kind, requestID: request.id, validator: validator) }
+                    streamLoop: for try await message in transport.stream(urlRequest, requestID: request.id) {
                         for event in try decoder.events(for: message) {
                             validator.observe(event)
                             continuation.yield(event)
+                            if case .completed = event { break streamLoop }
                         }
                     }
                     try validator.validate()

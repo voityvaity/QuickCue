@@ -31,6 +31,21 @@ jobs:
       - name: Validate privacy manifest and repository safety
         run: python3 .github/scripts/validate_repository.py
 
+      - name: Test real Darwin URLSession transport and record Foundation framing
+        run: |
+          set -o pipefail
+          mkdir -p TestResults
+          swift test 2>&1 | tee TestResults/transport-tests.log
+
+      - name: Upload transport evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: QuickCue-transport-evidence
+          path: TestResults/transport-tests.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -47,6 +62,7 @@ jobs:
             -scheme QuickCue \
             -configuration Debug \
             -destination "generic/platform=iOS Simulator" \
+            QUICKCUE_SOURCE_REVISION="$GITHUB_SHA" \
             CODE_SIGNING_ALLOWED=NO \
             clean build
 
@@ -77,6 +93,7 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
             -resultBundlePath TestResults/QuickCue.xcresult \
+            QUICKCUE_SOURCE_REVISION="$GITHUB_SHA" \
             CODE_SIGNING_ALLOWED=NO \
             test
 
@@ -101,10 +118,35 @@ jobs:
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -derivedDataPath "$PWD/build-device" \
+            QUICKCUE_SOURCE_REVISION="$GITHUB_SHA" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             clean build
+
+      - name: Verify packaged build identity
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, plistlib
+          products = pathlib.Path("build-device/Build/Products/Release-iphoneos")
+          apps = list(products.glob("*.app"))
+          assert len(apps) == 1, "Expected exactly one app"
+          info = plistlib.loads((apps[0] / "Info.plist").read_bytes())
+          identity = {name: info.get(name) for name in ["CFBundleShortVersionString", "CFBundleVersion", "QuickCueSourceRevision"]}
+          assert identity["CFBundleShortVersionString"] == "0.3.1", "Unexpected version"
+          assert identity["CFBundleVersion"] == "4", "Unexpected build"
+          assert identity["QuickCueSourceRevision"] == os.environ["GITHUB_SHA"], "Source revision missing or mismatched"
+          pathlib.Path("TestResults/build-identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
+          print(json.dumps(identity))
+          PY
+
+      - name: Upload build identity
+        uses: actions/upload-artifact@v6
+        with:
+          name: QuickCue-build-identity
+          path: TestResults/build-identity.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Package unsigned IPA
         run: |

@@ -4,14 +4,31 @@ import XCTest
 
 @MainActor
 final class ProviderHTTPTests: XCTestCase {
+    func testDeepSeekConnectionProbeUsesNeutralPromptAndNonThinkingStream() async throws {
+        let stub = ProviderHTTPStub(body: chatBody)
+        let provider = DeepSeekProvider(modelName: "fixture-model", credential: { "fixture-token" }, transport: stub.transport)
+        _ = try await ProviderConnectionChecker.verify(provider: provider)
+        let request = try XCTUnwrap(stub.lastRequest)
+        XCTAssertEqual(request.url?.host, "api.deepseek.com")
+        XCTAssertEqual(request.url?.path, "/chat/completions")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-token")
+        let body = try capturedJSON(from: stub)
+        XCTAssertEqual((body["thinking"] as? [String: String])?["type"], "disabled")
+        XCTAssertEqual(body["max_tokens"] as? Int, 32)
+        XCTAssertEqual(body["stream"] as? Bool, true)
+        let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+        XCTAssertTrue(messages[0]["content"]?.contains("Это проверка подключения") == true)
+        XCTAssertFalse(messages[0]["content"]?.contains("3–5") == true)
+    }
+
     func testOpenAIResponsesPayloadAndAuthorization() async throws {
         let stub = ProviderHTTPStub(
             body: """
             data: {"type":"response.output_text.delta","delta":"Да"}
 
-            data: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":1}}}
+            data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":1}}}
 
-            """
+            """ + "\n"
         )
 
         let provider = OpenAIProvider(
@@ -44,11 +61,11 @@ final class ProviderHTTPTests: XCTestCase {
 
             data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Да"}}
 
-            data: {"type":"message_delta","usage":{"output_tokens":3}}
+            data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":3}}
 
             data: {"type":"message_stop"}
 
-            """
+            """ + "\n"
         )
 
         let provider = AnthropicProvider(
@@ -168,7 +185,7 @@ final class ProviderHTTPTests: XCTestCase {
 
         data: [DONE]
 
-        """
+        """ + "\n"
     }
 
     private func request() -> AIRequest {
@@ -261,68 +278,15 @@ private final class ProviderHTTPStub: @unchecked Sendable {
                 return
             }
 
-            for message in Self.messages(from: responseBody) {
-                continuation.yield(message)
-            }
-
-            continuation.finish()
+            do {
+                var decoder = SSEDecoder()
+                // Use the exact production framing, including UTF-8 across byte boundaries.
+                for byte in responseBody {
+                    if let message = try decoder.consume(byte: byte) { continuation.yield(message) }
+                }
+                try decoder.finish()
+                continuation.finish()
+            } catch { continuation.finish(throwing: error) }
         }
-    }
-
-    private static func messages(
-        from body: Data
-    ) -> [SSEMessage] {
-        let text = String(
-            decoding: body,
-            as: UTF8.self
-        )
-
-        var messages: [SSEMessage] = []
-        var eventName: String?
-        var dataLines: [String] = []
-
-        func flush() {
-            guard !dataLines.isEmpty else {
-                eventName = nil
-                return
-            }
-
-            messages.append(
-                SSEMessage(
-                    event: eventName,
-                    data: dataLines.joined(separator: "\n")
-                )
-            )
-
-            eventName = nil
-            dataLines.removeAll(keepingCapacity: true)
-        }
-
-        for rawLine in text.split(
-            separator: "\n",
-            omittingEmptySubsequences: false
-        ) {
-            var line = String(rawLine)
-
-            if line.hasSuffix("\r") {
-                line.removeLast()
-            }
-
-            if line.isEmpty {
-                flush()
-            } else if line.hasPrefix("event:") {
-                eventName = String(line.dropFirst(6))
-                    .trimmingCharacters(in: .whitespaces)
-            } else if line.hasPrefix("data:") {
-                dataLines.append(
-                    String(line.dropFirst(5))
-                        .trimmingCharacters(in: .whitespaces)
-                )
-            }
-        }
-
-        flush()
-
-        return messages
     }
 }

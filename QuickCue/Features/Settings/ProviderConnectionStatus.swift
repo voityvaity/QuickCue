@@ -115,6 +115,12 @@ struct ProviderConnectionDetails: View {
             if let latency = report.firstTokenMilliseconds {
                 Text("Первые слова: \(latency) мс")
             }
+            if report.requestID != nil {
+                ShareLink(item: report.diagnosticSummary(provider: selection.kind)) {
+                    Label("Поделиться результатом проверки", systemImage: "square.and.arrow.up")
+                }
+                Text("Только код результата, время и номер сборки. Без ключа и текста ответа.")
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)

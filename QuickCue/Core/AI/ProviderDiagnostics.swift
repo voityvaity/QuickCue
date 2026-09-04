@@ -4,6 +4,11 @@ import Foundation
 enum ProviderFailure {
     static func category(for error: Error) -> String {
         if error is CancellationError { return "cancelled" }
+        if let failure = error as? StreamFailure { return failure.rawValue }
+        if let failure = error as? SSETransportFailure {
+            if case .httpStatus(let status) = failure { return category(for: AIProviderError.badResponse(status, "http_error")) }
+            return failure.safeCode
+        }
         if let error = error as? URLError {
             switch error.code {
             case .cancelled: return "cancelled"
@@ -36,6 +41,11 @@ enum ProviderFailure {
     }
 
     static func message(for error: Error) -> String {
+        if let failure = error as? StreamFailure { return failure.localizedDescription }
+        if let failure = error as? SSETransportFailure {
+            if case .httpStatus(let status) = failure { return message(forHTTPStatus: status) }
+            return message(forCategory: failure.safeCode)
+        }
         if let providerError = error as? AIProviderError {
             return providerError.localizedDescription
         }
@@ -63,7 +73,10 @@ enum ProviderFailure {
     }
 
     static func message(forCategory category: String?) -> String {
+        if let category, let failure = StreamFailure(rawValue: category) { return failure.localizedDescription }
         switch category {
+        case "invalid_http", "content_type", "invalid_utf8": return "Сервис вернул неожиданный формат ответа. Проверьте адрес и совместимость API."
+        case "event_too_large", "stream_too_large", "consumer_too_slow": return "Поток ответа превысил безопасный размер. Запрос остановлен; попробуйте более короткий вопрос."
         case "stream_error": return message(forHTTPStatus: 200)
         case "unauthorized", "credential_missing": return message(forHTTPStatus: 401)
         case "billing": return message(forHTTPStatus: 402)
@@ -92,17 +105,21 @@ enum ProviderConnectionChecker {
         let client = ProviderRegistry(settings: settings).provider(selection, honorMockMode: false, snapshotCredentials: true)
         let model = client.modelName
         let revision = settings.configurationRevision(for: selection)
+        let requestID = UUID()
         var report = ProviderConnectionReport(
             state: .failed, modelName: model, checkedAt: .now,
             firstTokenMilliseconds: nil, totalMilliseconds: nil, errorCategory: nil
         )
+        report.requestID = requestID
+        report.buildIdentity = .current
         do {
-            let result = try await verify(provider: client)
+            let result = try await verify(provider: client, requestID: requestID)
             try Task.checkCancellation()
             report.state = .verified
             report.firstTokenMilliseconds = result.firstTokenMilliseconds
             report.totalMilliseconds = result.totalMilliseconds
         } catch {
+            LatencyLogger().failed(provider: selection.kind, error: error, requestID: requestID)
             report.errorCategory = ProviderFailure.category(for: error)
             if Task.isCancelled { report.state = .unverified }
         }
@@ -120,9 +137,11 @@ enum ProviderConnectionChecker {
         let totalMilliseconds: Int
     }
 
-    static func verify(provider: any AIProvider, timeoutSeconds: Double = 15) async throws -> Result {
+    static func verify(provider: any AIProvider, timeoutSeconds: Double = 15, requestID: UUID = UUID()) async throws -> Result {
         let request = AIRequest(
-            question: "Ответь одним словом: работает?", context: [], maxOutputTokens: 32
+            id: requestID,
+            question: "Ответь одним словом: работает?", context: [], maxOutputTokens: 32,
+            systemPrompt: "Это проверка подключения. Ответь одним словом: Да. Без пояснений, списков и форматирования."
         )
         return try await withThrowingTaskGroup(of: Result.self) { group in
             group.addTask {
@@ -144,6 +163,8 @@ enum ProviderConnectionChecker {
                 try Task.checkCancellation()
                 guard let firstToken else { throw AIProviderError.emptyResponse }
                 guard completed else { throw AIProviderError.incompleteResponse }
+                LatencyLogger().firstToken(provider: provider.kind, milliseconds: firstToken, requestID: requestID)
+                LatencyLogger().completed(provider: provider.kind, milliseconds: milliseconds(started.duration(to: clock.now)), requestID: requestID)
                 return Result(firstTokenMilliseconds: firstToken, totalMilliseconds: milliseconds(started.duration(to: clock.now)))
             }
             group.addTask {

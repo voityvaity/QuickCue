@@ -26,3 +26,5 @@ Config/Local.xcconfig
 .DS_Store
 __pycache__/
 .validation-tools/
+.build/
+.swiftpm/
