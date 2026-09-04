@@ -36,6 +36,8 @@ targets:
       path: QuickCue/Resources/Info.plist
       properties:
         CFBundleDisplayName: QuickCue
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         QuickCueSourceRevision: "$(QUICKCUE_SOURCE_REVISION)"
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: "QuickCue использует микрофон только во время явно запущенной сессии, чтобы распознавать русскую речь."

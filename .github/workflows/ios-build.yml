@@ -133,11 +133,11 @@ jobs:
           assert len(apps) == 1, "Expected exactly one app"
           info = plistlib.loads((apps[0] / "Info.plist").read_bytes())
           identity = {name: info.get(name) for name in ["CFBundleShortVersionString", "CFBundleVersion", "QuickCueSourceRevision"]}
-          assert identity["CFBundleShortVersionString"] == "0.3.1", "Unexpected version"
-          assert identity["CFBundleVersion"] == "4", "Unexpected build"
-          assert identity["QuickCueSourceRevision"] == os.environ["GITHUB_SHA"], "Source revision missing or mismatched"
           pathlib.Path("TestResults/build-identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
-          print(json.dumps(identity))
+          print(json.dumps(identity), flush=True)
+          assert identity["CFBundleShortVersionString"] == "0.3.1", f"Unexpected version: {identity['CFBundleShortVersionString']!r}"
+          assert identity["CFBundleVersion"] == "4", f"Unexpected build: {identity['CFBundleVersion']!r}"
+          assert identity["QuickCueSourceRevision"] == os.environ["GITHUB_SHA"], "Source revision missing or mismatched"
           PY
 
       - name: Upload build identity

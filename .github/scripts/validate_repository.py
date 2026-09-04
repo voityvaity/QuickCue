@@ -26,6 +26,10 @@ if not re.search(r"CURRENT_PROJECT_VERSION:\s*4\s", project):
     errors.append("project.yml: expected build 4")
 if not re.search(r"MARKETING_VERSION:\s*0\.3\.1\s", project):
     errors.append("project.yml: expected version 0.3.1")
+if not re.search(r'CFBundleShortVersionString:\s*["\']?\$\(MARKETING_VERSION\)["\']?\s', project):
+    errors.append("project.yml: packaged version must reference MARKETING_VERSION")
+if not re.search(r'CFBundleVersion:\s*["\']?\$\(CURRENT_PROJECT_VERSION\)["\']?\s', project):
+    errors.append("project.yml: packaged build must reference CURRENT_PROJECT_VERSION")
 
 # Include untracked candidates during local validation so a newly added secret
 # cannot pass merely because it has not been staged yet. Ignored build/tool
