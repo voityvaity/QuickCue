@@ -22,17 +22,17 @@ enum ConversationMessageKind: String, Codable, Sendable {
     case error
 }
 
-typealias SessionRecord = QuickCueSchemaV5.SessionRecord
-typealias TranscriptRecord = QuickCueSchemaV5.TranscriptRecord
-typealias AnswerRecord = QuickCueSchemaV5.AnswerRecord
-typealias PhotoRecord = QuickCueSchemaV5.PhotoRecord
-typealias UsageRecord = QuickCueSchemaV5.UsageRecord
-typealias ConversationMessageRecord = QuickCueSchemaV5.ConversationMessageRecord
-typealias CandidateProfile = QuickCueSchemaV5.CandidateProfile
-typealias JobProfile = QuickCueSchemaV5.JobProfile
-typealias AttachmentRecord = QuickCueSchemaV5.AttachmentRecord
-typealias ContextProfile = QuickCueSchemaV5.ContextProfile
-typealias SessionContextSnapshot = QuickCueSchemaV5.SessionContextSnapshot
+typealias SessionRecord = QuickCueSchemaV6.SessionRecord
+typealias TranscriptRecord = QuickCueSchemaV6.TranscriptRecord
+typealias AnswerRecord = QuickCueSchemaV6.AnswerRecord
+typealias PhotoRecord = QuickCueSchemaV6.PhotoRecord
+typealias UsageRecord = QuickCueSchemaV6.UsageRecord
+typealias ConversationMessageRecord = QuickCueSchemaV6.ConversationMessageRecord
+typealias CandidateProfile = QuickCueSchemaV6.CandidateProfile
+typealias JobProfile = QuickCueSchemaV6.JobProfile
+typealias AttachmentRecord = QuickCueSchemaV6.AttachmentRecord
+typealias ContextProfile = QuickCueSchemaV6.ContextProfile
+typealias SessionContextSnapshot = QuickCueSchemaV6.SessionContextSnapshot
 
 enum QuickCueSchemaV2: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
@@ -219,7 +219,7 @@ enum QuickCueSchemaV2: VersionedSchema {
 
 enum QuickCueMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [QuickCueSchemaV1.self, QuickCueSchemaV2.self, QuickCueSchemaV3.self, QuickCueSchemaV4.self, QuickCueSchemaV5.self]
+        [QuickCueSchemaV1.self, QuickCueSchemaV2.self, QuickCueSchemaV3.self, QuickCueSchemaV4.self, QuickCueSchemaV5.self, QuickCueSchemaV6.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -227,6 +227,7 @@ enum QuickCueMigrationPlan: SchemaMigrationPlan {
             .lightweight(fromVersion: QuickCueSchemaV2.self, toVersion: QuickCueSchemaV3.self),
             .lightweight(fromVersion: QuickCueSchemaV3.self, toVersion: QuickCueSchemaV4.self),
             .lightweight(fromVersion: QuickCueSchemaV4.self, toVersion: QuickCueSchemaV5.self),
+            .lightweight(fromVersion: QuickCueSchemaV5.self, toVersion: QuickCueSchemaV6.self),
         ]
     }
 }

@@ -135,6 +135,12 @@ struct SettingsView: View {
                     } label: {
                         Label("Камера и физические кнопки", systemImage: "camera.badge.ellipsis")
                     }
+
+                    NavigationLink {
+                        SpeechBenchmarkView()
+                    } label: {
+                        Label("Проверка русской речи", systemImage: "waveform.badge.magnifyingglass")
+                    }
                 }
 
                 Section {

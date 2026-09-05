@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class SessionStoreTests: XCTestCase {
+    func testSpeechFinalizationAndQueueTimingAreStoredSeparately() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(speechRecognizer: recognizer)
+        defer { fixture.close() }
+
+        fixture.store.startListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        recognizer.emit("Как работает actor?", isFinal: false)
+        try await waitUntil { recognizer.finishCount == 1 }
+        recognizer.emit("Как работает actor?", isFinal: true)
+        try await waitUntil { fixture.provider.requests.count == 1 }
+
+        let transcript = try XCTUnwrap(
+            fixture.context.fetch(FetchDescriptor<TranscriptRecord>()).first
+        )
+        let answer = try XCTUnwrap(fixture.store.visibleAnswers.first)
+        XCTAssertEqual(transcript.speechEngineRaw, "SFSpeechRecognizer")
+        XCTAssertNotNil(transcript.endpointDelayMilliseconds)
+        XCTAssertGreaterThanOrEqual(transcript.finalizationMilliseconds ?? -1, 0)
+        XCTAssertEqual(answer.speechEngineRaw, transcript.speechEngineRaw)
+        XCTAssertEqual(answer.speechEndpointDelayMilliseconds, transcript.endpointDelayMilliseconds)
+        XCTAssertEqual(answer.speechFinalizationMilliseconds, transcript.finalizationMilliseconds)
+        XCTAssertGreaterThanOrEqual(answer.queueWaitMilliseconds ?? -1, 0)
+    }
+
     func testManualSpeechSavesTranscriptButSendsOnlyAfterExplicitTap() async throws {
         let recognizer = ControlledSpeechRecognizer()
         let fixture = try SessionFixture(
@@ -500,6 +525,7 @@ private final class ControlledSpeechRecognizer: SpeechRecognizing {
     var onFailure: ((Error) -> Void)?
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private(set) var finishCount = 0
 
     func start() async throws {
         startCount += 1
@@ -518,7 +544,7 @@ private final class ControlledSpeechRecognizer: SpeechRecognizing {
         onStateChange?(state)
     }
 
-    func finishCurrentUtterance() {}
+    func finishCurrentUtterance() { finishCount += 1 }
 
     func emit(_ text: String, isFinal: Bool) {
         onTranscript?(text, isFinal, 1)

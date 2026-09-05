@@ -112,6 +112,15 @@ struct AnswerCardView: View {
             DisclosureGroup("Подробности", isExpanded: $showTechnicalDetails) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Модель: \(answer.modelName)")
+                    if let endpoint = answer.speechEndpointDelayMilliseconds {
+                        Text("Пауза до финализации речи: \(endpoint) мс")
+                    }
+                    if let finalization = answer.speechFinalizationMilliseconds {
+                        Text("Финализация Apple Speech: \(finalization) мс")
+                    }
+                    if let queue = answer.queueWaitMilliseconds {
+                        Text("Ожидание очереди: \(queue) мс")
+                    }
                     if answer.firstTokenMilliseconds > 0 {
                         Text("Первый фрагмент: \(answer.firstTokenMilliseconds) мс")
                     }

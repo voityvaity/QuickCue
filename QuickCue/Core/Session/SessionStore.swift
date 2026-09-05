@@ -42,6 +42,12 @@ final class SessionStore: ObservableObject {
         var turn: ConversationTurn
     }
 
+    private struct SpeechTimingSnapshot {
+        let engine: String
+        let endpointDelayMilliseconds: Int?
+        let finalizationMilliseconds: Int?
+    }
+
     private let modelContext: ModelContext
     private let settings: AppSettings
     private let detector = QuestionDetector()
@@ -64,6 +70,8 @@ final class SessionStore: ObservableObject {
     private var activeContextText = ""
     private var activeContextSnapshotID: UUID?
     private var retainedPhoto: RetainedPhoto?
+    private var speechEndpointRequestedAt: Date?
+    private var speechEndpointDelayMilliseconds: Int?
 
     private struct RetainedPhoto {
         let sessionID: UUID
@@ -99,7 +107,7 @@ final class SessionStore: ObservableObject {
         self.speechRecognizer.onStateChange = { [weak self] phase in
             self?.listeningPhase = phase
         }
-        self.speechRecognizer.onUtteranceStarted = { [weak self] in self?.assembler.beginUtterance() }
+        self.speechRecognizer.onUtteranceStarted = { [weak self] in self?.beginSpeechUtterance() }
         self.speechRecognizer.onFailure = { [weak self] error in
             guard let self else { return }
             self.stopCurrentRecognition()
@@ -589,6 +597,8 @@ final class SessionStore: ObservableObject {
         debounceTask?.cancel()
         debounceTask = nil
         assembler.discard()
+        speechEndpointRequestedAt = nil
+        speechEndpointDelayMilliseconds = nil
         isListening = false
         isConversationListening = false
 
@@ -622,7 +632,15 @@ final class SessionStore: ObservableObject {
         if let confirmed = assembler.receive(text, isFinal: isFinal) {
             debounceTask?.cancel()
             debounceTask = nil
-            finalize(confirmed, mode: recognitionMode, confidence: confidence)
+            let finalization = speechEndpointRequestedAt.map {
+                max(0, Int(Date.now.timeIntervalSince($0) * 1_000))
+            }
+            let timing = SpeechTimingSnapshot(
+                engine: "SFSpeechRecognizer",
+                endpointDelayMilliseconds: speechEndpointDelayMilliseconds,
+                finalizationMilliseconds: finalization
+            )
+            finalize(confirmed, mode: recognitionMode, confidence: confidence, timing: timing)
         } else {
             guard !isFinal, !assembler.partialText.isEmpty else {
                 debounceTask?.cancel()
@@ -638,19 +656,37 @@ final class SessionStore: ObservableObject {
             debounceTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: delay)
                 guard !Task.isCancelled, let self, self.recognitionGeneration == generation else { return }
+                self.speechEndpointRequestedAt = .now
+                self.speechEndpointDelayMilliseconds = Int(delay / 1_000_000)
                 self.speechRecognizer.finishCurrentUtterance()
             }
         }
     }
 
-    private func finalize(_ text: String, mode: RecognitionMode, confidence: Double) {
+    private func beginSpeechUtterance() {
+        assembler.beginUtterance()
+        speechEndpointRequestedAt = nil
+        speechEndpointDelayMilliseconds = nil
+    }
+
+    private func finalize(
+        _ text: String,
+        mode: RecognitionMode,
+        confidence: Double,
+        timing: SpeechTimingSnapshot?
+    ) {
         switch mode {
-        case .live: finalizeLiveCandidate(text, confidence: confidence)
-        case .conversation: finalizeConversationCandidate(text, confidence: confidence)
+        case .live: finalizeLiveCandidate(text, confidence: confidence, timing: timing)
+        case .conversation: finalizeConversationCandidate(text, confidence: confidence, timing: timing)
         }
     }
 
-    private func finalizeLiveCandidate(_ text: String, confidence: Double, force: Bool = false) {
+    private func finalizeLiveCandidate(
+        _ text: String,
+        confidence: Double,
+        force: Bool = false,
+        timing: SpeechTimingSnapshot? = nil
+    ) {
         guard let session = currentSession else { return }
         let detection = detector.detect(text)
         guard let transcript = registerTranscriptIfNew(
@@ -658,7 +694,8 @@ final class SessionStore: ObservableObject {
             confidence: confidence,
             sessionID: session.id,
             namespace: "live",
-            forceQuestion: force
+            forceQuestion: force,
+            timing: timing
         ) else { return }
 
         turns.append(ContextEntry(id: transcript.id, date: .now, turn: ConversationTurn(role: "speaker", text: detection.normalizedText)))
@@ -686,7 +723,12 @@ final class SessionStore: ObservableObject {
         )
     }
 
-    private func finalizeConversationCandidate(_ text: String, confidence: Double, manual: Bool = false) {
+    private func finalizeConversationCandidate(
+        _ text: String,
+        confidence: Double,
+        manual: Bool = false,
+        timing: SpeechTimingSnapshot? = nil
+    ) {
         guard let session = currentSession else { return }
         let detection = detector.detect(text)
         guard let transcript = registerTranscriptIfNew(
@@ -694,7 +736,8 @@ final class SessionStore: ObservableObject {
             confidence: confidence,
             sessionID: session.id,
             namespace: "conversation",
-            forceQuestion: manual
+            forceQuestion: manual,
+            timing: timing
         ) else { return }
 
         let previousSpeaker = visibleConversationMessages.reversed().compactMap {
@@ -740,7 +783,8 @@ final class SessionStore: ObservableObject {
         confidence: Double,
         sessionID: UUID,
         namespace: String,
-        forceQuestion: Bool
+        forceQuestion: Bool,
+        timing: SpeechTimingSnapshot? = nil
     ) -> TranscriptRecord? {
         guard !detection.normalizedText.isEmpty else { return nil }
         let key = "\(namespace):\(detection.normalizedText.lowercased())"
@@ -755,6 +799,9 @@ final class SessionStore: ObservableObject {
             confidence: confidence,
             isQuestion: detection.isQuestion || forceQuestion
         )
+        transcript.speechEngineRaw = timing?.engine
+        transcript.endpointDelayMilliseconds = timing?.endpointDelayMilliseconds
+        transcript.finalizationMilliseconds = timing?.finalizationMilliseconds
         modelContext.insert(transcript)
         return transcript
     }
@@ -841,13 +888,24 @@ final class SessionStore: ObservableObject {
         record.questionRevision = max(1, questionRevision)
         record.parentAnswerID = parentAnswerID
         record.contextSnapshotID = activeContextSnapshotID
+        if let sourceTranscriptID,
+           let transcript = (try? modelContext.fetch(FetchDescriptor<TranscriptRecord>()))?.first(where: {
+               $0.id == sourceTranscriptID && $0.sessionID == session.id
+           }) {
+            record.speechEngineRaw = transcript.speechEngineRaw
+            record.speechEndpointDelayMilliseconds = transcript.endpointDelayMilliseconds
+            record.speechFinalizationMilliseconds = transcript.finalizationMilliseconds
+        }
         modelContext.insert(record)
         visibleAnswers.insert(record, at: 0)
         conversationMessage?.answerID = record.id
         conversationMessage?.statusRaw = AnswerStatus.queued.rawValue
         let fallbackDelay = settings.fallbackDelaySeconds
+        let queuedAt = Date.now
         let ticket = scheduler.enqueue(id: record.id, sessionID: session.id) { [weak self] in
             guard let self else { return }
+            record.queueWaitMilliseconds = max(0, Int(Date.now.timeIntervalSince(queuedAt) * 1_000))
+            self.logger.queueWait(milliseconds: record.queueWaitMilliseconds ?? 0, requestID: record.id)
             await self.ask(
                 session: session, record: record, prompt: prompt, mode: mode, imageJPEG: upload,
                 primary: primary, fallback: fallback, fallbackDelay: fallbackDelay,

@@ -261,6 +261,61 @@ final class MigrationTests: XCTestCase {
         }
     }
 
+    func testVersionedV5StoreMigratesToV6AndKeepsSpeechTimingOptional() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+        var transcriptID = UUID()
+        var answerID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV5.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            let session = QuickCueSchemaV5.SessionRecord(id: sessionID, title: "V5", provider: .mock)
+            let transcript = QuickCueSchemaV5.TranscriptRecord(
+                sessionID: sessionID, text: "Как работает actor?", isQuestion: true
+            )
+            let answer = QuickCueSchemaV5.AnswerRecord(
+                sessionID: sessionID, question: transcript.text, answer: "Через изоляцию.",
+                provider: .mock, modelName: "mock"
+            )
+            transcriptID = transcript.id
+            answerID = answer.id
+            context.insert(session)
+            context.insert(transcript)
+            context.insert(answer)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(container)
+            let transcript = try XCTUnwrap(context.fetch(FetchDescriptor<TranscriptRecord>()).first)
+            let answer = try XCTUnwrap(context.fetch(FetchDescriptor<AnswerRecord>()).first)
+            XCTAssertEqual(transcript.id, transcriptID)
+            XCTAssertEqual(answer.id, answerID)
+            XCTAssertNil(transcript.speechEngineRaw)
+            XCTAssertNil(transcript.endpointDelayMilliseconds)
+            XCTAssertNil(transcript.finalizationMilliseconds)
+            XCTAssertNil(answer.queueWaitMilliseconds)
+            transcript.speechEngineRaw = "SFSpeechRecognizer"
+            answer.queueWaitMilliseconds = 12
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(reopened)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<TranscriptRecord>()).first?.speechEngineRaw, "SFSpeechRecognizer")
+            XCTAssertEqual(try context.fetch(FetchDescriptor<AnswerRecord>()).first?.queueWaitMilliseconds, 12)
+        }
+    }
+
     func testRecoveryPreservesCorruptStoreAndAllowsRetryWithoutReset() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

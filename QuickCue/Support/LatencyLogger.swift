@@ -16,6 +16,10 @@ struct LatencyLogger: Sendable {
         logger.info("completed request=\(requestID?.uuidString ?? "none", privacy: .public) provider=\(provider.rawValue, privacy: .public) ms=\(milliseconds, privacy: .public)")
     }
 
+    func queueWait(milliseconds: Int, requestID: UUID) {
+        logger.info("queue_wait request=\(requestID.uuidString, privacy: .public) ms=\(milliseconds, privacy: .public)")
+    }
+
     func failed(provider: ProviderKind, error: Error, requestID: UUID? = nil) {
         logger.error("failed request=\(requestID?.uuidString ?? "none", privacy: .public) provider=\(provider.rawValue, privacy: .public) code=\(SafeErrorCode.classify(error), privacy: .public)")
     }
