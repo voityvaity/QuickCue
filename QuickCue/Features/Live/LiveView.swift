@@ -12,6 +12,9 @@ struct LiveView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 14) {
+                    if !settings.hasSeenQuickTips {
+                        quickTips
+                    }
                     dailyUsageSummary
                     if let session = store.currentSession {
                         sessionSummary(session)
@@ -51,6 +54,31 @@ struct LiveView: View {
                 Text(store.alertMessage ?? "")
             }
         }
+    }
+
+    private var quickTips: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label("Три быстрых шага", systemImage: "sparkles")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    settings.hasSeenQuickTips = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Скрыть подсказки")
+            }
+            Label("Нажмите «Начать слушать» — аудио не сохраняется.", systemImage: "mic.fill")
+            Label("Проверьте распознанный вопрос и при необходимости исправьте его.", systemImage: "pencil")
+            Label("Звезда сохраняет полезный ответ в избранное.", systemImage: "star.fill")
+        }
+        .font(.subheadline)
+        .padding(14)
+        .background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var dailyUsageSummary: some View {

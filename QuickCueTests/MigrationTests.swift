@@ -139,6 +139,61 @@ final class MigrationTests: XCTestCase {
         }
     }
 
+    func testVersionedV3StoreMigratesToV4WithRevisionDefaultsAndReopens() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+        var answerID = UUID()
+        var transcriptID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV3.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            let session = QuickCueSchemaV3.SessionRecord(id: sessionID, title: "V3", provider: .mock)
+            let transcript = QuickCueSchemaV3.TranscriptRecord(sessionID: sessionID, text: "Старый вопрос?", isQuestion: true)
+            let answer = QuickCueSchemaV3.AnswerRecord(
+                sessionID: sessionID,
+                question: transcript.text,
+                answer: "Старый ответ",
+                provider: .mock,
+                modelName: "mock"
+            )
+            transcriptID = transcript.id
+            answerID = answer.id
+            context.insert(session)
+            context.insert(transcript)
+            context.insert(answer)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(container)
+            let transcript = try XCTUnwrap(context.fetch(FetchDescriptor<TranscriptRecord>()).first)
+            let answer = try XCTUnwrap(context.fetch(FetchDescriptor<AnswerRecord>()).first)
+            XCTAssertEqual(transcript.id, transcriptID)
+            XCTAssertEqual(transcript.revision, 1)
+            XCTAssertEqual(answer.id, answerID)
+            XCTAssertEqual(answer.questionRevision, 1)
+            XCTAssertFalse(answer.isStale)
+            XCTAssertFalse(answer.isFavorite)
+            answer.isFavorite = true
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let answer = try ModelContext(reopened).fetch(FetchDescriptor<AnswerRecord>()).first
+            XCTAssertEqual(answer?.id, answerID)
+            XCTAssertTrue(answer?.isFavorite == true)
+        }
+    }
+
     func testRecoveryPreservesCorruptStoreAndAllowsRetryWithoutReset() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

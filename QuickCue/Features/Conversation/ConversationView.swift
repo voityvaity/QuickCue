@@ -7,6 +7,8 @@ struct ConversationView: View {
     @State private var showRoleExplanation = false
     @State private var manualText = ""
     @State private var hasEndedConversation = false
+    @State private var followsLatest = true
+    @State private var hasUnseenAnswer = false
 
     var body: some View {
         NavigationStack {
@@ -27,6 +29,15 @@ struct ConversationView: View {
                         if !store.conversationLiveTranscript.isEmpty {
                             liveTranscriptBubble
                         }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id("conversation-bottom")
+                            .onAppear {
+                                followsLatest = true
+                                hasUnseenAnswer = false
+                            }
+                            .onDisappear { followsLatest = false }
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
@@ -34,8 +45,26 @@ struct ConversationView: View {
                 }
                 .background(Color(uiColor: .systemGroupedBackground))
                 .onChange(of: store.visibleConversationMessages.count) { _, _ in
-                    if let id = store.visibleConversationMessages.last?.id {
-                        withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+                    followLatestIfNeeded(proxy)
+                }
+                .onChange(of: store.conversationUpdateRevision) { _, _ in
+                    followLatestIfNeeded(proxy)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if hasUnseenAnswer {
+                        Button {
+                            withAnimation { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
+                            followsLatest = true
+                            hasUnseenAnswer = false
+                        } label: {
+                            Label("Новый ответ", systemImage: "arrow.down")
+                                .font(.caption.weight(.bold))
+                                .frame(minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 8)
+                        .accessibilityHint("Перейти к последней реплике")
                     }
                 }
             }
@@ -189,6 +218,14 @@ struct ConversationView: View {
         .background(.ultraThinMaterial)
     }
 
+    private func followLatestIfNeeded(_ proxy: ScrollViewProxy) {
+        if followsLatest {
+            withAnimation { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
+        } else {
+            hasUnseenAnswer = true
+        }
+    }
+
     private func submitText() {
         let text = manualText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -224,6 +261,7 @@ struct ConversationView: View {
 
 private struct ConversationMessageBubble: View {
     @EnvironmentObject private var store: SessionStore
+    @EnvironmentObject private var settings: AppSettings
     @Bindable var message: ConversationMessageRecord
 
     private var speaker: ConversationSpeaker {
@@ -271,6 +309,7 @@ private struct ConversationMessageBubble: View {
                 }
             } else {
                 Text(message.text.isEmpty ? (status == .cancelled ? "Ответ остановлен" : "Ответ не получен") : message.text)
+                    .font(speaker == .assistant ? answerFont : .body)
                     .textSelection(.enabled)
                     .foregroundStyle(kind == .error ? .red : .primary)
             }
@@ -290,6 +329,14 @@ private struct ConversationMessageBubble: View {
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(Color.indigo.opacity(0.18))
             }
+        }
+    }
+
+    private var answerFont: Font {
+        switch settings.answerTextSize {
+        case .compact: .callout
+        case .standard: .body
+        case .large: .title3
         }
     }
 

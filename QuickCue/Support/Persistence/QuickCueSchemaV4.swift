@@ -1,37 +1,12 @@
 import Foundation
 import SwiftData
 
-enum ConversationSpeaker: String, Codable, CaseIterable, Sendable {
-    case me
-    case partner
-    case assistant
-
-    var title: String {
-        switch self {
-        case .me: "Вы"
-        case .partner: "Собеседник"
-        case .assistant: "QuickCue"
-        }
+/// Stage 07 schema. V1–V3 are frozen migration inputs and must never be edited.
+enum QuickCueSchemaV4: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(4, 0, 0) }
+    static var models: [any PersistentModel.Type] {
+        [SessionRecord.self, TranscriptRecord.self, AnswerRecord.self, PhotoRecord.self, UsageRecord.self, ConversationMessageRecord.self]
     }
-}
-
-enum ConversationMessageKind: String, Codable, Sendable {
-    case speech
-    case answer
-    case photo
-    case error
-}
-
-typealias SessionRecord = QuickCueSchemaV4.SessionRecord
-typealias TranscriptRecord = QuickCueSchemaV4.TranscriptRecord
-typealias AnswerRecord = QuickCueSchemaV4.AnswerRecord
-typealias PhotoRecord = QuickCueSchemaV4.PhotoRecord
-typealias UsageRecord = QuickCueSchemaV4.UsageRecord
-typealias ConversationMessageRecord = QuickCueSchemaV4.ConversationMessageRecord
-
-enum QuickCueSchemaV2: VersionedSchema {
-    static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
-    static var models: [any PersistentModel.Type] { [SessionRecord.self, TranscriptRecord.self, AnswerRecord.self, PhotoRecord.self, UsageRecord.self, ConversationMessageRecord.self] }
 
     @Model
     final class SessionRecord {
@@ -63,6 +38,7 @@ enum QuickCueSchemaV2: VersionedSchema {
         var text: String
         var confidence: Double
         var isQuestion: Bool
+        var revision: Int = 1
 
         init(sessionID: UUID, text: String, confidence: Double = 0, isQuestion: Bool = false) {
             self.id = UUID()
@@ -93,17 +69,18 @@ enum QuickCueSchemaV2: VersionedSchema {
         var errorMessage: String?
         var promptSnapshot: String?
         var promptVersion: String?
+        var responseStyleRaw: String?
+        var sourceTranscriptID: UUID?
+        var sourceMessageID: UUID?
+        var questionRevision: Int = 1
+        var parentAnswerID: UUID?
+        var isStale: Bool = false
+        var isFavorite: Bool = false
 
         init(
-            id: UUID = UUID(),
-            sessionID: UUID,
-            question: String,
-            answer: String = "",
-            provider: ProviderKind,
-            modelName: String,
-            requestKind: AnswerMode = .concise,
-            status: AnswerStatus = .completed,
-            firstTokenMilliseconds: Int = 0,
+            id: UUID = UUID(), sessionID: UUID, question: String, answer: String = "",
+            provider: ProviderKind, modelName: String, requestKind: AnswerMode = .concise,
+            status: AnswerStatus = .completed, firstTokenMilliseconds: Int = 0,
             totalMilliseconds: Int = 0
         ) {
             self.id = id
@@ -136,16 +113,13 @@ enum QuickCueSchemaV2: VersionedSchema {
         var confidence: Double
         var photoRelativePath: String?
         var answerID: UUID?
+        var transcriptID: UUID?
+        var revision: Int = 1
 
         init(
-            sessionID: UUID,
-            speaker: ConversationSpeaker,
-            kind: ConversationMessageKind,
-            text: String,
-            status: AnswerStatus = .completed,
-            confidence: Double = 0,
-            photoRelativePath: String? = nil,
-            answerID: UUID? = nil
+            sessionID: UUID, speaker: ConversationSpeaker, kind: ConversationMessageKind,
+            text: String, status: AnswerStatus = .completed, confidence: Double = 0,
+            photoRelativePath: String? = nil, answerID: UUID? = nil, transcriptID: UUID? = nil
         ) {
             self.id = UUID()
             self.sessionID = sessionID
@@ -157,6 +131,7 @@ enum QuickCueSchemaV2: VersionedSchema {
             self.confidence = confidence
             self.photoRelativePath = photoRelativePath
             self.answerID = answerID
+            self.transcriptID = transcriptID
         }
     }
 
@@ -183,7 +158,7 @@ enum QuickCueSchemaV2: VersionedSchema {
     final class UsageRecord {
         @Attribute(.unique) var id: UUID
         var createdAt: Date
-        var sessionID: UUID
+        var sessionID: UUID?
         var providerRaw: String
         var requestKind: String
         var inputTokens: Int
@@ -198,8 +173,13 @@ enum QuickCueSchemaV2: VersionedSchema {
         var costSourceRaw: String?
         var errorCode: String?
         var durationMilliseconds: Int?
+        var cachedInputTokens: Int?
+        var providerReportedCost: Double?
+        var costCurrencyCode: String?
+        var pricingSnapshotDate: Date?
+        var pricingModelName: String?
 
-        init(sessionID: UUID, provider: ProviderKind, requestKind: String) {
+        init(sessionID: UUID?, provider: ProviderKind, requestKind: String) {
             self.id = UUID()
             self.createdAt = .now
             self.sessionID = sessionID
@@ -209,18 +189,5 @@ enum QuickCueSchemaV2: VersionedSchema {
             self.outputTokens = 0
             self.estimatedCostRUB = 0
         }
-    }
-}
-
-enum QuickCueMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] {
-        [QuickCueSchemaV1.self, QuickCueSchemaV2.self, QuickCueSchemaV3.self, QuickCueSchemaV4.self]
-    }
-    static var stages: [MigrationStage] {
-        [
-            .lightweight(fromVersion: QuickCueSchemaV1.self, toVersion: QuickCueSchemaV2.self),
-            .lightweight(fromVersion: QuickCueSchemaV2.self, toVersion: QuickCueSchemaV3.self),
-            .lightweight(fromVersion: QuickCueSchemaV3.self, toVersion: QuickCueSchemaV4.self),
-        ]
     }
 }

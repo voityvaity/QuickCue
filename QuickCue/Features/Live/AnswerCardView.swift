@@ -6,6 +6,7 @@ struct AnswerCardView: View {
     @EnvironmentObject private var settings: AppSettings
     @Bindable var answer: AnswerRecord
     @State private var showTechnicalDetails = false
+    @State private var showQuestionEditor = false
 
     private var status: AnswerStatus {
         AnswerStatus(rawValue: answer.statusRaw) ?? .completed
@@ -14,6 +15,14 @@ struct AnswerCardView: View {
     private var isPhoto: Bool { answer.requestKindRaw == AnswerMode.photo.rawValue }
     private var isCurrentSession: Bool { store.currentSession?.id == answer.sessionID }
 
+    private var answerFont: Font {
+        switch settings.answerTextSize {
+        case .compact: .callout
+        case .standard: .body
+        case .large: .title3
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -21,6 +30,13 @@ struct AnswerCardView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.indigo)
                 Spacer()
+                Button { store.toggleFavorite(answer) } label: {
+                    Image(systemName: answer.isFavorite ? "star.fill" : "star")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(answer.isFavorite ? .yellow : .secondary)
+                .accessibilityLabel(answer.isFavorite ? "Убрать из избранного" : "Добавить в избранное")
                 statusView
             }
 
@@ -28,6 +44,12 @@ struct AnswerCardView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(3)
+
+            if answer.isStale {
+                Label("Относится к прежней версии вопроса", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+            }
 
             if status == .failed || status == .cancelled {
                 if !answer.answer.isEmpty {
@@ -57,8 +79,8 @@ struct AnswerCardView: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text(answer.answer)
-                    .font(.body)
+                displayedAnswer
+                    .font(answerFont)
                     .textSelection(.enabled)
                     .animation(.default, value: answer.answer)
 
@@ -67,15 +89,36 @@ struct AnswerCardView: View {
                         actionButton("Короче", systemImage: "text.alignleft") {
                             store.requestVariation(.concise, for: answer)
                         }
-                        .disabled(!isCurrentSession || status != .completed)
-                        actionButton("Подробнее", systemImage: "list.bullet.rectangle") {
-                            store.requestVariation(.detailed, for: answer)
+                        .disabled(!canUseAnswerAction)
+                        actionButton("Пример", systemImage: "lightbulb") {
+                            store.requestVariation(.example, for: answer)
                         }
-                        .disabled(!isCurrentSession || status != .completed)
+                        .disabled(!canUseAnswerAction)
+                        actionButton("Исправить", systemImage: "pencil") {
+                            showQuestionEditor = true
+                        }
+                        .disabled(!canEditQuestion)
                     }
-                    actionButton("Копировать", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = answer.answer
+                    Menu {
+                        if !isPhoto {
+                            Button("Подробнее", systemImage: "list.bullet.rectangle") {
+                                store.requestVariation(.detailed, for: answer)
+                            }
+                            .disabled(!canUseAnswerAction)
+                            Button("Другой ответ", systemImage: "arrow.triangle.2.circlepath") {
+                                store.requestVariation(.alternative, for: answer)
+                            }
+                            .disabled(!canUseAnswerAction)
+                        }
+                        Button("Копировать", systemImage: "doc.on.doc") {
+                            UIPasteboard.general.string = answer.answer
+                        }
+                    } label: {
+                        Label("Ещё", systemImage: "ellipsis.circle")
+                            .font(.caption.weight(.medium))
+                            .frame(minHeight: 44)
                     }
+                    .buttonStyle(.bordered)
                 }
 
                 HStack(spacing: 16) {
@@ -124,6 +167,32 @@ struct AnswerCardView: View {
         .padding(16)
         .background(.background, in: RoundedRectangle(cornerRadius: 18))
         .overlay { RoundedRectangle(cornerRadius: 18).stroke(.quaternary) }
+        .sheet(isPresented: $showQuestionEditor) {
+            QuestionCorrectionView(answer: answer)
+                .environmentObject(store)
+        }
+    }
+
+    private var canUseAnswerAction: Bool {
+        isCurrentSession && status == .completed && !answer.isStale
+    }
+
+    private var canEditQuestion: Bool {
+        isCurrentSession && answer.sourceTranscriptID != nil && status == .completed && !answer.isStale
+    }
+
+    private var displayedAnswer: Text {
+        guard settings.highlightKeywords, status == .completed else { return Text(answer.answer) }
+        let markers = ["важно", "итог", "пример", "ошибка", "сложность"]
+        return answer.answer.components(separatedBy: " ").enumerated().reduce(Text("")) { partial, item in
+            let token = item.element
+            let separator = item.offset == 0 ? "" : " "
+            let fragment = Text(separator + token)
+            if markers.contains(where: { token.localizedCaseInsensitiveContains($0) }) {
+                return partial + fragment.bold().foregroundColor(.indigo)
+            }
+            return partial + fragment
+        }
     }
 
     @ViewBuilder
@@ -164,5 +233,51 @@ struct AnswerCardView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+    }
+}
+
+private struct QuestionCorrectionView: View {
+    @EnvironmentObject private var store: SessionStore
+    @Environment(\.dismiss) private var dismiss
+    let answer: AnswerRecord
+    @State private var text: String
+
+    init(answer: AnswerRecord) {
+        self.answer = answer
+        _text = State(initialValue: answer.question)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $text)
+                        .frame(minHeight: 150)
+                } header: {
+                    Text("Исправленный вопрос")
+                } footer: {
+                    Text("Старый ответ сохранится как ответ на прежнюю формулировку. Сохранение само по себе не отправляет запрос AI.")
+                }
+
+                Section {
+                    Button("Только сохранить исправление") {
+                        store.reviseQuestion(text, for: answer, answerAgain: false)
+                        dismiss()
+                    }
+                    Button("Сохранить и ответить заново") {
+                        store.reviseQuestion(text, for: answer, answerAgain: true)
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .navigationTitle("Исправить вопрос")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+            }
+        }
     }
 }

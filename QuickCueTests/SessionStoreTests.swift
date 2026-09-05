@@ -220,6 +220,77 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(assistant.speakerRaw, ConversationSpeaker.assistant.rawValue)
     }
 
+    func testQuestionCorrectionKeepsOldAnswerAndDoesNotSendUntilExplicitlyRequested() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        fixture.store.submitManualQuestion("Что такое актр?")
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.first?.id), text: "Старый ответ")
+        try await waitUntil { fixture.store.activeRequestCount == 0 }
+        let oldAnswer = try XCTUnwrap(fixture.store.visibleAnswers.first)
+
+        fixture.store.reviseQuestion("Что такое actor?", for: oldAnswer, answerAgain: false)
+
+        XCTAssertEqual(fixture.provider.requests.count, 1)
+        XCTAssertEqual(oldAnswer.answer, "Старый ответ")
+        XCTAssertTrue(oldAnswer.isStale)
+        XCTAssertEqual(fixture.store.contextTurns.last?.text, "Что такое actor?")
+
+        fixture.store.reviseQuestion("Что такое actor?", for: oldAnswer, answerAgain: true)
+        try await waitUntil { fixture.provider.requests.count == 2 }
+        let revised = try XCTUnwrap(fixture.store.visibleAnswers.first)
+        XCTAssertEqual(revised.question, "Что такое actor?")
+        XCTAssertEqual(revised.questionRevision, oldAnswer.questionRevision + 1)
+        XCTAssertFalse(revised.isStale)
+    }
+
+    func testVariationIsBoundToSpecificAnswerRevision() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        fixture.store.submitManualQuestion("Что такое actor?")
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.first?.id), text: "Первый ответ")
+        try await waitUntil { fixture.store.activeRequestCount == 0 }
+        let source = try XCTUnwrap(fixture.store.visibleAnswers.first)
+
+        fixture.store.requestVariation(.example, for: source)
+        try await waitUntil { fixture.provider.requests.count == 2 }
+        let variation = try XCTUnwrap(fixture.store.visibleAnswers.first)
+        XCTAssertEqual(variation.parentAnswerID, source.id)
+        XCTAssertEqual(variation.sourceTranscriptID, source.sourceTranscriptID)
+        XCTAssertEqual(variation.questionRevision, source.questionRevision)
+        XCTAssertTrue(fixture.provider.requests.last?.question.contains("пример") == true)
+    }
+
+    func testQueuedRequestKeepsPromptSnapshotFromEnqueueTime() async throws {
+        let fixture = try SessionFixture { settings in
+            settings.savePromptConfiguration(
+                style: .concise,
+                includesCodeWhenUseful: false,
+                additionalInstructions: "Снимок номер один",
+                for: .live
+            )
+        }
+        defer { fixture.close() }
+        fixture.store.submitManualQuestion("Первый вопрос?")
+        fixture.store.submitManualQuestion("Второй вопрос?")
+        fixture.store.submitManualQuestion("Третий вопрос?")
+        try await waitUntil { fixture.provider.requests.count == 2 && fixture.store.pendingRequestCount == 1 }
+
+        fixture.settings.savePromptConfiguration(
+            style: .detailed,
+            includesCodeWhenUseful: true,
+            additionalInstructions: "Снимок номер два",
+            for: .live
+        )
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.first?.id), text: "Готово")
+        try await waitUntil { fixture.provider.requests.count == 3 }
+
+        let queuedRequest = try XCTUnwrap(fixture.provider.requests.first { $0.question == "Третий вопрос?" })
+        XCTAssertTrue(queuedRequest.systemPrompt.contains("Снимок номер один"))
+        XCTAssertFalse(queuedRequest.systemPrompt.contains("Снимок номер два"))
+    }
+
     func testPhotoRetryNeverSilentlyDropsTheImage() async throws {
         let fixture = try SessionFixture()
         defer { fixture.close() }

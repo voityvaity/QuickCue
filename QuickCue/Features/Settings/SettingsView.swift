@@ -99,6 +99,14 @@ struct SettingsView: View {
                         Label("Промпт и стиль ответа", systemImage: "text.quote")
                     }
 
+                    Picker("Размер текста ответов", selection: $settings.answerTextSize) {
+                        ForEach(AnswerTextSize.allCases) { size in
+                            Text(size.title).tag(size)
+                        }
+                    }
+
+                    Toggle("Выделять ключевые слова", isOn: $settings.highlightKeywords)
+
                     Picker("При смене вкладки", selection: $settings.listeningNavigationPolicy) {
                         ForEach(ListeningNavigationPolicy.allCases) { policy in
                             Text(policy.title).tag(policy)
@@ -900,29 +908,53 @@ private struct CustomProviderSettingsView: View {
 
 private struct PromptSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
-    @State private var draft = ""
+    @State private var profile: PromptProfileKind = .live
+    @State private var style: ResponseStyle = .balanced
+    @State private var includesCode = false
+    @State private var additionalInstructions = ""
+    @State private var usesLegacyPrompt = true
     @State private var saved = false
 
     var body: some View {
         Form {
             Section {
-                Button("Короткие тезисы") { apply(PromptFactory.defaultConciseSystem) }
-                Button("Собеседование") { apply(PromptFactory.interviewSystem) }
-                Button("Программирование") { apply(PromptFactory.codingSystem) }
+                Picker("Раздел", selection: $profile) {
+                    ForEach(PromptProfileKind.allCases) { profile in
+                        Text(profile.title).tag(profile)
+                    }
+                }
+                .pickerStyle(.segmented)
             } header: {
-                Text("Готовые варианты")
+                Text("Отдельные настройки")
             } footer: {
-                Text("Вариант заполняет редактор ниже — его можно изменить перед сохранением.")
+                Text("Изменение одного раздела не меняет остальные. Активная сессия продолжает использовать снимок настроек, сделанный для каждого уже поставленного в очередь запроса.")
             }
 
             Section {
-                TextEditor(text: $draft)
-                    .frame(minHeight: 260)
-                    .font(.body)
+                Picker("Длина ответа", selection: $style) {
+                    ForEach(ResponseStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                ForEach(ResponseStyle.allCases) { item in
+                    if item == style {
+                        Text(item.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Toggle("Добавлять код, когда полезно", isOn: $includesCode)
+            } header: {
+                Text("Готовый стиль")
+            }
+
+            Section {
+                TextEditor(text: $additionalInstructions)
+                    .frame(minHeight: 150)
                     .textInputAutocapitalization(.sentences)
 
                 HStack {
-                    Text("\(draft.count) символов")
+                    Text("\(additionalInstructions.count)/\(PromptComposer.maximumAdditionalCharacters) символов")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -933,25 +965,67 @@ private struct PromptSettingsView: View {
                     }
                 }
 
-                Button("Сохранить промпт") {
-                    settings.systemPrompt = draft
+                Button(usesLegacyPrompt ? "Перейти на новые настройки" : "Сохранить настройки") {
+                    settings.savePromptConfiguration(
+                        style: style,
+                        includesCodeWhenUseful: includesCode,
+                        additionalInstructions: additionalInstructions,
+                        for: profile
+                    )
+                    usesLegacyPrompt = false
                     saved = true
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
             } header: {
-                Text("Системный промпт")
+                Text("Дополнительные инструкции")
             } footer: {
-                Text("QuickCue автоматически добавляет к нему распознанный вопрос и последние реплики. Не вставляйте сюда API-ключи.")
+                Text("Не вставляйте API-ключи. Текст ограничен 4000 символами и добавляется после безопасных правил QuickCue.")
+            }
+
+            if usesLegacyPrompt {
+                Section("Текущая совместимость") {
+                    Label("Старый промпт сохранён и продолжает работать", systemImage: "archivebox.fill")
+                        .foregroundStyle(.secondary)
+                    Text("Он будет заменён только для раздела «\(profile.title)» после нажатия кнопки выше. Остальные разделы останутся без изменений.")
+                        .font(.footnote)
+                }
+            } else {
+                Section {
+                    Button("Вернуть прежний промпт для этого раздела", role: .destructive) {
+                        settings.restoreLegacyPrompt(for: profile)
+                        loadProfile()
+                    }
+                } footer: {
+                    Text("Это не удаляет сохранённый ранее текст и не меняет другие разделы.")
+                }
             }
         }
-        .navigationTitle("Промпт")
-        .task { draft = settings.systemPrompt }
-        .onChange(of: draft) { _, _ in saved = false }
+        .navigationTitle("Промпт и стиль")
+        .task { loadProfile() }
+        .onChange(of: profile) { _, _ in loadProfile() }
+        .onChange(of: style) { _, _ in saved = false }
+        .onChange(of: includesCode) { _, _ in saved = false }
+        .onChange(of: additionalInstructions) { _, value in
+            if value.count > PromptComposer.maximumAdditionalCharacters {
+                additionalInstructions = String(value.prefix(PromptComposer.maximumAdditionalCharacters))
+            }
+            saved = false
+        }
     }
 
-    private func apply(_ value: String) {
-        draft = value
+    private func loadProfile() {
+        if let configuration = settings.promptConfiguration(for: profile) {
+            style = configuration.style
+            includesCode = configuration.includesCodeWhenUseful
+            additionalInstructions = configuration.additionalInstructions
+            usesLegacyPrompt = false
+        } else {
+            style = .balanced
+            includesCode = profile == .photo
+            additionalInstructions = ""
+            usesLegacyPrompt = true
+        }
         saved = false
     }
 }

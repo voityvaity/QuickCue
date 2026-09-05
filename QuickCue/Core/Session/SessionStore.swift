@@ -9,6 +9,7 @@ final class SessionStore: ObservableObject {
         let id: UUID
         let sessionID: UUID
         let text: String
+        let revision: Int
     }
 
     @Published private(set) var isListening = false { didSet { updateIdleTimer() } }
@@ -22,6 +23,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var activeRequestCount = 0
     @Published private(set) var pendingRequestCount = 0
     @Published private(set) var latestConfirmedTranscript: ConfirmedTranscript?
+    @Published private(set) var conversationUpdateRevision = 0
     @Published var alertMessage: String?
 
     let speakerAttributionExplanation: String
@@ -257,7 +259,12 @@ final class SessionStore: ObservableObject {
         guard isForeground, let candidate = latestConfirmedTranscript,
               currentSession?.id == candidate.sessionID, let session = currentSession else { return }
         incrementQuestionCount(session)
-        enqueueQuestion(prompt: candidate.text, displayQuestion: candidate.text)
+        enqueueQuestion(
+            prompt: candidate.text,
+            displayQuestion: candidate.text,
+            sourceTranscriptID: candidate.id,
+            questionRevision: candidate.revision
+        )
     }
 
     func answerPhoto(
@@ -337,15 +344,30 @@ final class SessionStore: ObservableObject {
 
     func retryAnswer(_ answer: AnswerRecord) {
         guard isForeground, currentSession?.id == answer.sessionID else { return }
+        guard !answer.isStale else {
+            alertMessage = "Вопрос был исправлен. Повторите ответ из актуальной версии вопроса."
+            return
+        }
         guard answer.requestKindRaw != AnswerMode.photo.rawValue else {
             alertMessage = "Для повторного анализа фото откройте «Камеру» и отправьте снимок ещё раз."
             return
         }
-        enqueueQuestion(prompt: answer.question, displayQuestion: answer.question)
+        enqueueQuestion(
+            prompt: answer.question,
+            displayQuestion: answer.question,
+            sourceTranscriptID: answer.sourceTranscriptID,
+            sourceMessageID: answer.sourceMessageID,
+            questionRevision: answer.questionRevision,
+            parentAnswerID: answer.id
+        )
     }
 
     func requestVariation(_ variation: AnswerVariation, for answer: AnswerRecord) {
         guard isForeground, currentSession?.id == answer.sessionID else { return }
+        guard !answer.isStale else {
+            alertMessage = "Эта карточка относится к прежней версии вопроса. Сначала получите новый ответ."
+            return
+        }
         guard answer.requestKindRaw != AnswerMode.photo.rawValue else {
             alertMessage = "Для уточнения решения по фото откройте «Камеру» и отправьте снимок ещё раз."
             return
@@ -353,7 +375,11 @@ final class SessionStore: ObservableObject {
         let prompt = "\(answer.question)\n\n\(variation.instruction)"
         enqueueQuestion(
             prompt: prompt,
-            displayQuestion: "\(variation.title): \(answer.question)"
+            displayQuestion: "\(variation.title): \(answer.question)",
+            sourceTranscriptID: answer.sourceTranscriptID,
+            sourceMessageID: answer.sourceMessageID,
+            questionRevision: answer.questionRevision,
+            parentAnswerID: answer.id
         )
     }
 
@@ -365,22 +391,119 @@ final class SessionStore: ObservableObject {
     func setSpeaker(_ speaker: ConversationSpeaker, for message: ConversationMessageRecord) {
         guard speaker != .assistant, message.kindRaw == ConversationMessageKind.speech.rawValue,
               message.speakerRaw != ConversationSpeaker.assistant.rawValue else { return }
+        guard message.speakerRaw != speaker.rawValue else { return }
         message.speakerRaw = speaker.rawValue
+        message.revision += 1
         if let index = turns.firstIndex(where: { $0.id == message.id }) {
             turns[index].turn = ConversationTurn(role: speaker.title, text: message.text)
         }
+        invalidateAnswers(sourceMessageID: message.id)
         try? modelContext.save()
+    }
+
+    func reviseQuestion(_ value: String, for answer: AnswerRecord, answerAgain: Bool) {
+        let text = detector.detect(value).normalizedText
+        guard isForeground, let session = currentSession, session.id == answer.sessionID,
+              let transcriptID = answer.sourceTranscriptID,
+              let transcript = (try? modelContext.fetch(FetchDescriptor<TranscriptRecord>()))?.first(where: {
+                  $0.id == transcriptID && $0.sessionID == session.id
+              }), !text.isEmpty else {
+            alertMessage = "Эту старую карточку нельзя исправить в текущей сессии."
+            return
+        }
+        guard transcript.text != text else {
+            if answerAgain {
+                enqueueRevisedQuestion(text, transcript: transcript, sourceMessageID: answer.sourceMessageID)
+            }
+            return
+        }
+
+        transcript.text = text
+        transcript.revision += 1
+        if let messageID = answer.sourceMessageID,
+           let message = visibleConversationMessages.first(where: { $0.id == messageID }) {
+            message.text = text
+            message.revision += 1
+            if let index = turns.firstIndex(where: { $0.id == messageID }) {
+                turns[index].turn = ConversationTurn(
+                    role: (ConversationSpeaker(rawValue: message.speakerRaw) ?? .me).title,
+                    text: text
+                )
+            }
+        }
+        if let index = turns.firstIndex(where: { $0.id == transcriptID }) {
+            turns[index].turn = ConversationTurn(role: turns[index].turn.role, text: text)
+        }
+        if latestConfirmedTranscript?.id == transcriptID {
+            latestConfirmedTranscript = ConfirmedTranscript(
+                id: transcript.id,
+                sessionID: session.id,
+                text: text,
+                revision: transcript.revision
+            )
+        }
+        invalidateAnswers(sourceTranscriptID: transcriptID)
+        try? modelContext.save()
+        if answerAgain {
+            enqueueRevisedQuestion(text, transcript: transcript, sourceMessageID: answer.sourceMessageID)
+        }
     }
 
     func requestAnswer(for message: ConversationMessageRecord) {
         guard isForeground, currentSession?.id == message.sessionID,
               message.kindRaw == ConversationMessageKind.speech.rawValue else { return }
+        guard !hasActiveAnswer(sourceMessageID: message.id) else {
+            alertMessage = "Ответ на эту реплику уже находится в очереди."
+            return
+        }
         let assistantMessage = makeAssistantMessage(sessionID: message.sessionID)
         enqueueQuestion(
             prompt: message.text,
             displayQuestion: message.text,
-            conversationMessage: assistantMessage
+            conversationMessage: assistantMessage,
+            sourceTranscriptID: message.transcriptID,
+            sourceMessageID: message.id,
+            questionRevision: message.revision
         )
+    }
+
+    private func enqueueRevisedQuestion(
+        _ text: String,
+        transcript: TranscriptRecord,
+        sourceMessageID: UUID?
+    ) {
+        guard let session = currentSession, session.id == transcript.sessionID else { return }
+        incrementQuestionCount(session)
+        let assistantMessage = sourceMessageID == nil ? nil : makeAssistantMessage(sessionID: session.id)
+        enqueueQuestion(
+            prompt: text,
+            displayQuestion: text,
+            conversationMessage: assistantMessage,
+            sourceTranscriptID: transcript.id,
+            sourceMessageID: sourceMessageID,
+            questionRevision: transcript.revision
+        )
+    }
+
+    private func hasActiveAnswer(sourceMessageID: UUID) -> Bool {
+        let active = Set([AnswerStatus.queued.rawValue, AnswerStatus.thinking.rawValue, AnswerStatus.streaming.rawValue])
+        return visibleAnswers.contains { $0.sourceMessageID == sourceMessageID && active.contains($0.statusRaw) }
+    }
+
+    private func invalidateAnswers(sourceTranscriptID: UUID) {
+        invalidateAnswers { $0.sourceTranscriptID == sourceTranscriptID }
+    }
+
+    private func invalidateAnswers(sourceMessageID: UUID) {
+        invalidateAnswers { $0.sourceMessageID == sourceMessageID }
+    }
+
+    private func invalidateAnswers(where matches: (AnswerRecord) -> Bool) {
+        let active = Set([AnswerStatus.queued.rawValue, AnswerStatus.thinking.rawValue, AnswerStatus.streaming.rawValue])
+        for record in visibleAnswers where matches(record) {
+            record.isStale = true
+            if active.contains(record.statusRaw) { scheduler.cancel(record.id) }
+        }
     }
 
     private func startRecognition(mode: RecognitionMode) {
@@ -501,7 +624,8 @@ final class SessionStore: ObservableObject {
         latestConfirmedTranscript = ConfirmedTranscript(
             id: transcript.id,
             sessionID: session.id,
-            text: detection.normalizedText
+            text: detection.normalizedText,
+            revision: transcript.revision
         )
 
         guard force || settings.answerTriggerPolicy == .automatic else {
@@ -511,13 +635,18 @@ final class SessionStore: ObservableObject {
         guard detection.isQuestion || force else { try? modelContext.save(); return }
         guard registerQuestionIfNew(detection.normalizedText) else { return }
         incrementQuestionCount(session)
-        enqueueQuestion(prompt: detection.normalizedText, displayQuestion: detection.normalizedText)
+        enqueueQuestion(
+            prompt: detection.normalizedText,
+            displayQuestion: detection.normalizedText,
+            sourceTranscriptID: transcript.id,
+            questionRevision: transcript.revision
+        )
     }
 
     private func finalizeConversationCandidate(_ text: String, confidence: Double, manual: Bool = false) {
         guard let session = currentSession else { return }
         let detection = detector.detect(text)
-        guard let _ = registerTranscriptIfNew(
+        guard let transcript = registerTranscriptIfNew(
             detection: detection,
             confidence: confidence,
             sessionID: session.id,
@@ -537,10 +666,12 @@ final class SessionStore: ObservableObject {
             speaker: speaker,
             kind: .speech,
             text: detection.normalizedText,
-            confidence: confidence
+            confidence: confidence,
+            transcriptID: transcript.id
         )
         modelContext.insert(message)
         visibleConversationMessages.append(message)
+        conversationUpdateRevision += 1
         conversationLiveTranscript = ""
         turns.append(ContextEntry(id: message.id, date: .now, turn: ConversationTurn(role: speaker.title, text: detection.normalizedText)))
         trimContext()
@@ -554,7 +685,10 @@ final class SessionStore: ObservableObject {
         enqueueQuestion(
             prompt: detection.normalizedText,
             displayQuestion: detection.normalizedText,
-            conversationMessage: assistantMessage
+            conversationMessage: assistantMessage,
+            sourceTranscriptID: transcript.id,
+            sourceMessageID: message.id,
+            questionRevision: message.revision
         )
     }
 
@@ -610,6 +744,7 @@ final class SessionStore: ObservableObject {
         )
         modelContext.insert(message)
         visibleConversationMessages.append(message)
+        conversationUpdateRevision += 1
         return message
     }
 
@@ -619,7 +754,11 @@ final class SessionStore: ObservableObject {
         displayQuestion: String,
         mode: AnswerMode = .concise,
         imageJPEG: Data? = nil,
-        conversationMessage: ConversationMessageRecord? = nil
+        conversationMessage: ConversationMessageRecord? = nil,
+        sourceTranscriptID: UUID? = nil,
+        sourceMessageID: UUID? = nil,
+        questionRevision: Int = 1,
+        parentAnswerID: UUID? = nil
     ) -> (AnswerRecord, RequestScheduler.Ticket)? {
         guard isForeground, let session = currentSession, session.endedAt == nil else { return nil }
         let registry = ProviderRegistry(settings: settings)
@@ -631,7 +770,7 @@ final class SessionStore: ObservableObject {
         let upload = primary.capabilities.supportsImages ? imageJPEG : nil
         let fallback = upload != nil && reserve?.capabilities.supportsImages != true ? nil : reserve
         let profile: PromptProfileKind = mode == .photo ? .photo : (conversationMessage == nil ? .live : .conversation)
-        let promptSnapshot = settings.prompt(for: profile)
+        let promptSnapshot = settings.promptSnapshot(for: profile)
         let record = AnswerRecord(
             sessionID: session.id,
             question: displayQuestion,
@@ -641,8 +780,13 @@ final class SessionStore: ObservableObject {
             status: .queued
         )
         record.providerRaw = primary.selection.rawValue
-        record.promptSnapshot = promptSnapshot
-        record.promptVersion = "\(profile.rawValue):v1"
+        record.promptSnapshot = promptSnapshot.text
+        record.promptVersion = promptSnapshot.version
+        record.responseStyleRaw = promptSnapshot.styleRaw
+        record.sourceTranscriptID = sourceTranscriptID
+        record.sourceMessageID = sourceMessageID
+        record.questionRevision = max(1, questionRevision)
+        record.parentAnswerID = parentAnswerID
         modelContext.insert(record)
         visibleAnswers.insert(record, at: 0)
         conversationMessage?.answerID = record.id
@@ -653,13 +797,18 @@ final class SessionStore: ObservableObject {
             await self.ask(
                 session: session, record: record, prompt: prompt, mode: mode, imageJPEG: upload,
                 primary: primary, fallback: fallback, fallbackDelay: fallbackDelay,
-                systemPrompt: promptSnapshot, conversationMessage: conversationMessage
+                systemPrompt: promptSnapshot.text, conversationMessage: conversationMessage
             )
         } onCancel: { [weak self] in
             self?.markCancelled(record, conversationMessage: conversationMessage)
         }
         try? modelContext.save()
         return (record, ticket)
+    }
+
+    func toggleFavorite(_ answer: AnswerRecord) {
+        answer.isFavorite.toggle()
+        try? modelContext.save()
     }
 
     private func ask(
@@ -725,6 +874,7 @@ final class SessionStore: ObservableObject {
                     }
                     record.answer += delta
                     conversationMessage?.text += delta
+                    if conversationMessage != nil { conversationUpdateRevision += 1 }
 
                 case .usage(let value):
                     record.inputTokens = value.inputTokens
@@ -742,6 +892,7 @@ final class SessionStore: ObservableObject {
             guard completed, !record.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AIProviderError.emptyResponse }
             record.statusRaw = AnswerStatus.completed.rawValue
             conversationMessage?.statusRaw = AnswerStatus.completed.rawValue
+            if conversationMessage != nil { conversationUpdateRevision += 1 }
             turns.append(ContextEntry(id: record.id, date: .now, turn: ConversationTurn(role: "assistant", text: record.answer)))
             warnForBudgetIfNeeded()
             try modelContext.save()
@@ -756,6 +907,7 @@ final class SessionStore: ObservableObject {
             conversationMessage?.statusRaw = AnswerStatus.failed.rawValue
             // Keep useful partial text visible; the status carries the error separately.
             if conversationMessage?.text.isEmpty == true { conversationMessage?.text = message }
+            if conversationMessage != nil { conversationUpdateRevision += 1 }
             alertMessage = message
             logger.failed(provider: primary.kind, error: error, requestID: record.id)
             try? modelContext.save()
@@ -778,6 +930,7 @@ final class SessionStore: ObservableObject {
         record.errorMessage = "Запрос отменён. Частичный ответ сохранён, если он уже появился."
         conversationMessage?.statusRaw = AnswerStatus.cancelled.rawValue
         if conversationMessage?.text.isEmpty == true { conversationMessage?.text = "Запрос отменён" }
+        if conversationMessage != nil { conversationUpdateRevision += 1 }
         try? modelContext.save()
     }
 

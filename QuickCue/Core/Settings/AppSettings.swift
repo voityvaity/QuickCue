@@ -21,6 +21,10 @@ final class AppSettings: ObservableObject {
         static let systemPrompt = "settings.systemPrompt"
         static let conversationPrompt = "settings.conversationPrompt"
         static let photoPrompt = "settings.photoPrompt"
+        static let promptConfigurations = "settings.promptConfigurations.v2"
+        static let answerTextSize = "settings.answerTextSize"
+        static let highlightKeywords = "settings.highlightKeywords"
+        static let hasSeenQuickTips = "settings.hasSeenQuickTips"
         static let appearance = "settings.appearance"
         static let connectionReports = "settings.connectionReports.v1"
         static let customProviders = "settings.customProviders.v1"
@@ -55,6 +59,18 @@ final class AppSettings: ObservableObject {
     @Published var systemPrompt: String { didSet { defaults.set(systemPrompt, forKey: Key.systemPrompt) } }
     @Published var conversationPrompt: String { didSet { defaults.set(conversationPrompt, forKey: Key.conversationPrompt) } }
     @Published var photoPrompt: String { didSet { defaults.set(photoPrompt, forKey: Key.photoPrompt) } }
+    @Published private(set) var promptConfigurations: [String: PromptConfiguration] {
+        didSet { persistPromptConfigurations() }
+    }
+    @Published var answerTextSize: AnswerTextSize {
+        didSet { defaults.set(answerTextSize.rawValue, forKey: Key.answerTextSize) }
+    }
+    @Published var highlightKeywords: Bool {
+        didSet { defaults.set(highlightKeywords, forKey: Key.highlightKeywords) }
+    }
+    @Published var hasSeenQuickTips: Bool {
+        didSet { defaults.set(hasSeenQuickTips, forKey: Key.hasSeenQuickTips) }
+    }
     @Published var appearance: AppAppearance { didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) } }
     @Published var listeningNavigationPolicy: ListeningNavigationPolicy {
         didSet { defaults.set(listeningNavigationPolicy.rawValue, forKey: Key.listeningNavigationPolicy) }
@@ -100,6 +116,13 @@ final class AppSettings: ObservableObject {
         } else {
             decodedConnectionReports = [:]
         }
+        let decodedPromptConfigurations: [String: PromptConfiguration]
+        if let data = defaults.data(forKey: Key.promptConfigurations),
+           let decoded = try? JSONDecoder().decode([String: PromptConfiguration].self, from: data) {
+            decodedPromptConfigurations = decoded
+        } else {
+            decodedPromptConfigurations = [:]
+        }
 
         mockMode = (defaults.object(forKey: Key.mockMode) as? Bool) ?? true
         primaryProvider = ProviderSelection(
@@ -119,6 +142,10 @@ final class AppSettings: ObservableObject {
         // Preserve the shipped shared prompt until per-mode editors are introduced.
         conversationPrompt = defaults.string(forKey: Key.conversationPrompt) ?? ""
         photoPrompt = defaults.string(forKey: Key.photoPrompt) ?? ""
+        promptConfigurations = decodedPromptConfigurations
+        answerTextSize = AnswerTextSize(rawValue: defaults.string(forKey: Key.answerTextSize) ?? "") ?? .standard
+        highlightKeywords = (defaults.object(forKey: Key.highlightKeywords) as? Bool) ?? false
+        hasSeenQuickTips = (defaults.object(forKey: Key.hasSeenQuickTips) as? Bool) ?? false
         appearance = AppAppearance(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .light
         listeningNavigationPolicy = ListeningNavigationPolicy(
             rawValue: defaults.string(forKey: Key.listeningNavigationPolicy) ?? ""
@@ -236,7 +263,42 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    func promptConfiguration(for profile: PromptProfileKind) -> PromptConfiguration? {
+        promptConfigurations[profile.rawValue]
+    }
+
+    func promptSnapshot(for profile: PromptProfileKind) -> PromptSnapshot {
+        if let configuration = promptConfiguration(for: profile) {
+            return PromptComposer.compose(profile: profile, configuration: configuration)
+        }
+        return PromptSnapshot(
+            text: prompt(for: profile),
+            version: "\(profile.rawValue):legacy-v1",
+            styleRaw: "legacy"
+        )
+    }
+
+    func savePromptConfiguration(
+        style: ResponseStyle,
+        includesCodeWhenUseful: Bool,
+        additionalInstructions: String,
+        for profile: PromptProfileKind
+    ) {
+        let revision = (promptConfigurations[profile.rawValue]?.revision ?? 0) + 1
+        promptConfigurations[profile.rawValue] = PromptConfiguration(
+            style: style,
+            includesCodeWhenUseful: includesCodeWhenUseful,
+            additionalInstructions: PromptComposer.normalizedAdditional(additionalInstructions),
+            revision: revision
+        )
+    }
+
+    func restoreLegacyPrompt(for profile: PromptProfileKind) {
+        promptConfigurations.removeValue(forKey: profile.rawValue)
+    }
+
     func setPrompt(_ value: String, for profile: PromptProfileKind) {
+        restoreLegacyPrompt(for: profile)
         switch profile {
         case .live: systemPrompt = value
         case .conversation: conversationPrompt = value
@@ -394,6 +456,12 @@ final class AppSettings: ObservableObject {
     private func persistConnectionReports() {
         if let data = try? JSONEncoder().encode(connectionReports) {
             defaults.set(data, forKey: Key.connectionReports)
+        }
+    }
+
+    private func persistPromptConfigurations() {
+        if let data = try? JSONEncoder().encode(promptConfigurations) {
+            defaults.set(data, forKey: Key.promptConfigurations)
         }
     }
 }

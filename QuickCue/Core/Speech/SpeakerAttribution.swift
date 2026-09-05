@@ -26,19 +26,25 @@ struct SemanticSpeakerAttributor: SpeakerAttributing {
 
 enum AnswerVariation {
     case concise
+    case example
     case detailed
+    case alternative
 
     var title: String {
         switch self {
         case .concise: "Короче"
+        case .example: "Пример"
         case .detailed: "Подробнее"
+        case .alternative: "Другой ответ"
         }
     }
 
     var instruction: String {
         switch self {
         case .concise: "Ответь ещё короче: максимум три коротких тезиса."
-        case .detailed: "Раскрой ответ подробнее и добавь один практический пример."
+        case .example: "Дай один конкретный практический пример к ответу. Не повторяй весь ответ."
+        case .detailed: "Раскрой ответ подробнее, сохраняя ясную структуру."
+        case .alternative: "Сформулируй другой самостоятельный ответ на тот же вопрос, не копируя предыдущий текст."
         }
     }
 }

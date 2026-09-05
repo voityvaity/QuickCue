@@ -4,6 +4,7 @@ import UIKit
 
 private enum HistoryFilter: String, CaseIterable, Identifiable {
     case all = "Все"
+    case favorites = "Избранное"
     case speech = "Речь"
     case photo = "Фото"
     var id: String { rawValue }
@@ -103,6 +104,8 @@ struct HistoryView: View {
             let matchesFilter: Bool
             switch filter {
             case .all: matchesFilter = true
+            case .favorites:
+                matchesFilter = answers.contains { $0.sessionID == session.id && $0.isFavorite }
             case .speech:
                 matchesFilter = transcripts.contains { $0.sessionID == session.id }
                     || conversationMessages.contains { $0.sessionID == session.id && $0.kindRaw == ConversationMessageKind.speech.rawValue }
@@ -196,9 +199,24 @@ struct HistoryView: View {
             Text("Сессия \(session.startedAt.formatted(date: .omitted, time: .shortened))").font(.headline)
             Text("\(session.questionCount) вопросов · \(session.photoCount) фото · \(session.endedAt == nil ? "не завершена" : "завершена")")
                 .font(.caption).foregroundStyle(.secondary)
+            if let summary = localSummary(for: session) {
+                Text(summary).font(.caption).foregroundStyle(.secondary)
+            }
             if let first = entries.first { Text(first.text).font(.subheadline).lineLimit(2) }
         }
         .padding(.vertical, 4)
+    }
+
+    private func localSummary(for session: SessionRecord) -> String? {
+        let rows = answers.filter { $0.sessionID == session.id }
+        guard !rows.isEmpty else { return nil }
+        let completed = rows.filter { $0.statusRaw == AnswerStatus.completed.rawValue }
+        let failed = rows.filter { $0.statusRaw == AnswerStatus.failed.rawValue }.count
+        let firstTokens = completed.map(\.firstTokenMilliseconds).filter { $0 > 0 }.sorted()
+        var parts = ["готово \(completed.count)/\(rows.count)"]
+        if failed > 0 { parts.append("ошибок \(failed)") }
+        if !firstTokens.isEmpty { parts.append("медиана первого текста \(firstTokens[firstTokens.count / 2]) мс") }
+        return parts.joined(separator: " · ")
     }
 
     private func dayTitle(_ day: Date) -> String {
@@ -347,12 +365,23 @@ private struct PhotoHistoryDetailView: View {
 
 private struct AnswerHistoryDetailView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var store: SessionStore
     @Bindable var answer: AnswerRecord
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text(answer.question).font(.title2.bold())
+                HStack(alignment: .top) {
+                    Text(answer.question).font(.title2.bold())
+                    Spacer()
+                    Button { store.toggleFavorite(answer) } label: {
+                        Image(systemName: answer.isFavorite ? "star.fill" : "star")
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(answer.isFavorite ? .yellow : .secondary)
+                    .accessibilityLabel(answer.isFavorite ? "Убрать из избранного" : "Добавить в избранное")
+                }
                 if !answer.answer.isEmpty { Text(answer.answer).textSelection(.enabled) }
                 if answer.statusRaw == AnswerStatus.failed.rawValue || answer.statusRaw == AnswerStatus.cancelled.rawValue {
                     Label(answer.errorMessage ?? "Ответ прерван", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
