@@ -8,6 +8,7 @@ final class AppSettings: ObservableObject {
         static let primaryProvider = "settings.primaryProvider"
         static let fallbackProvider = "settings.fallbackProvider"
         static let fallbackDelay = "settings.fallbackDelay"
+        static let latencyFallbackEnabled = "settings.latencyFallbackEnabled"
         static let monthlyBudget = "settings.monthlyBudget"
         static let sessionQuestionLimit = "settings.sessionQuestionLimit"
         static let sessionPhotoLimit = "settings.sessionPhotoLimit"
@@ -38,6 +39,7 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(fallbackProvider.rawValue, forKey: Key.fallbackProvider) }
     }
     @Published var fallbackDelaySeconds: Double { didSet { defaults.set(fallbackDelaySeconds, forKey: Key.fallbackDelay) } }
+    @Published var latencyFallbackEnabled: Bool { didSet { defaults.set(latencyFallbackEnabled, forKey: Key.latencyFallbackEnabled) } }
     @Published var monthlyBudgetRUB: Double { didSet { defaults.set(monthlyBudgetRUB, forKey: Key.monthlyBudget) } }
     @Published var sessionQuestionLimit: Int { didSet { defaults.set(sessionQuestionLimit, forKey: Key.sessionQuestionLimit) } }
     @Published var sessionPhotoLimit: Int { didSet { defaults.set(sessionPhotoLimit, forKey: Key.sessionPhotoLimit) } }
@@ -67,6 +69,8 @@ final class AppSettings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let isExistingInstallation = defaults.object(forKey: Key.mockMode) != nil
+            || defaults.object(forKey: Key.primaryProvider) != nil
         let decodedCustomProviders: [CustomProviderProfile]
         if let data = defaults.data(forKey: Key.customProviders),
            let decoded = try? JSONDecoder().decode([FailableDecodable<CustomProviderProfile>].self, from: data) {
@@ -90,6 +94,7 @@ final class AppSettings: ObservableObject {
             rawValue: defaults.string(forKey: Key.fallbackProvider) ?? ProviderKind.yandexGPT.rawValue
         )
         fallbackDelaySeconds = (defaults.object(forKey: Key.fallbackDelay) as? Double) ?? 1.7
+        latencyFallbackEnabled = (defaults.object(forKey: Key.latencyFallbackEnabled) as? Bool) ?? isExistingInstallation
         monthlyBudgetRUB = (defaults.object(forKey: Key.monthlyBudget) as? Double) ?? 2_000
         sessionQuestionLimit = (defaults.object(forKey: Key.sessionQuestionLimit) as? Int) ?? 150
         sessionPhotoLimit = (defaults.object(forKey: Key.sessionPhotoLimit) as? Int) ?? 30

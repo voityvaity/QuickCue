@@ -15,6 +15,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.contextMinutes, 5)
         XCTAssertEqual(settings.listeningNavigationPolicy, .ask)
         XCTAssertEqual(settings.answerTriggerPolicy, .automatic)
+        XCTAssertFalse(settings.latencyFallbackEnabled)
     }
 
     func testCostEstimateUsesConfigurableRates() {
@@ -43,6 +44,17 @@ final class AppSettingsTests: XCTestCase {
         )
 
         XCTAssertEqual(provider.kind, .yandexGPT)
+    }
+
+    func testUpgradePreservesPreviouslyImplicitFallbackButFreshInstallDoesNotEnableIt() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "settings.mockMode")
+        XCTAssertTrue(AppSettings(defaults: defaults).latencyFallbackEnabled)
+        defaults.removeObject(forKey: "settings.latencyFallbackEnabled")
+        defaults.removeObject(forKey: "settings.mockMode")
+        XCTAssertFalse(AppSettings(defaults: defaults).latencyFallbackEnabled)
     }
 
     func testListeningAndAnswerPoliciesPersistIndependently() {

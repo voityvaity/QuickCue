@@ -4,6 +4,9 @@ struct UsageCostSummary {
     let knownSubtotal: Double
     let unknownAttemptCount: Int
     let hasAttempts: Bool
+    let attemptCount: Int
+    let inputTokens: Int
+    let outputTokens: Int
     private let onlyMock: Bool
     private let onlyPreflight: Bool
 
@@ -16,6 +19,9 @@ struct UsageCostSummary {
         knownSubtotal = records.filter { $0.costSourceRaw != "unknown" && $0.estimatedCostRUB.isFinite }
             .reduce(0) { $0 + max(0, $1.estimatedCostRUB) }
         hasAttempts = !records.isEmpty
+        attemptCount = records.count
+        inputTokens = records.reduce(0) { $0 + max(0, $1.inputTokens) }
+        outputTokens = records.reduce(0) { $0 + max(0, $1.outputTokens) }
         onlyMock = records.allSatisfy { $0.providerRaw == ProviderKind.mock.rawValue }
         onlyPreflight = records.allSatisfy { $0.costSourceRaw == "not_sent" }
     }
@@ -31,8 +37,10 @@ struct UsageCostSummary {
     }
 
     var detail: String? {
-        unknownAttemptCount > 0
-            ? "Не учтена стоимость попыток: \(unknownAttemptCount). Сервис может списать деньги и за отменённый запрос. Итог сверяйте в его кабинете."
-            : nil
+        var parts = ["Попыток: \(attemptCount) · токены: \(inputTokens) → \(outputTokens)"]
+        if unknownAttemptCount > 0 {
+            parts.append("Стоимость \(unknownAttemptCount) попыток неизвестна. Сервис может списать деньги и за отменённый запрос.")
+        }
+        return parts.joined(separator: "\n")
     }
 }

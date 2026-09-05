@@ -69,10 +69,12 @@ final class MigrationTests: XCTestCase {
             XCTAssertEqual(photos.first?.relativePath, "photos/original.jpg")
             XCTAssertEqual(photos.first?.answerID, answerID)
             XCTAssertEqual(usage.first?.id, usageID)
+            XCTAssertEqual(usage.first?.sessionID, sessionID)
             XCTAssertEqual(usage.first?.inputTokens, 100)
             XCTAssertEqual(usage.first?.estimatedCostRUB, 0.25)
             XCTAssertNil(usage.first?.attemptID)
             XCTAssertNil(usage.first?.usageSourceRaw)
+            XCTAssertNil(usage.first?.costCurrencyCode)
             XCTAssertEqual(messages.first?.id, messageID)
             XCTAssertEqual(messages.first?.answerID, answerID)
             XCTAssertEqual(messages.first?.text, answer)
@@ -86,6 +88,54 @@ final class MigrationTests: XCTestCase {
             let context = ModelContext(reopened)
             XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.AnswerRecord>()).first?.promptSnapshot, "Новый промпт")
             XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.UsageRecord>()).first?.usageSourceRaw, "reported")
+        }
+    }
+
+    func testVersionedV2StoreMigratesToV3AtSameURLAndReopens() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+        var usageID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV2.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            let session = QuickCueSchemaV2.SessionRecord(id: sessionID, title: "V2", provider: .deepSeek)
+            let usage = QuickCueSchemaV2.UsageRecord(sessionID: sessionID, provider: .deepSeek, requestKind: "concise")
+            usage.requestID = UUID()
+            usage.attemptID = UUID()
+            usage.usageSourceRaw = "reported"
+            usage.costSourceRaw = "unknown"
+            usageID = usage.id
+            context.insert(session)
+            context.insert(usage)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(container)
+            let usage = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.UsageRecord>()).first)
+            XCTAssertEqual(usage.id, usageID)
+            XCTAssertEqual(usage.sessionID, sessionID)
+            XCTAssertEqual(usage.requestKind, "concise")
+            XCTAssertEqual(usage.usageSourceRaw, "reported")
+            XCTAssertEqual(usage.costSourceRaw, "unknown")
+            XCTAssertNil(usage.costCurrencyCode)
+            usage.requestKind = "retry"
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let usage = try ModelContext(reopened).fetch(FetchDescriptor<QuickCue.UsageRecord>()).first
+            XCTAssertEqual(usage?.id, usageID)
+            XCTAssertEqual(usage?.requestKind, "retry")
         }
     }
 

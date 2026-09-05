@@ -157,6 +157,70 @@ final class SessionStore: ObservableObject {
 
     func cancelAnswer(_ answer: AnswerRecord) { scheduler.cancel(answer.id) }
 
+    /// Runs a paid-capable setup probe through the same application queue as answers.
+    /// Its usage row has no session ID, so it never creates a fake conversation.
+    func checkProviderConnection(_ selection: ProviderSelection) async -> ProviderConnectionReport {
+        await ProviderConnectionChecker.check(selection: selection, settings: settings) { [weak self] provider, requestID in
+            guard let self else { throw CancellationError() }
+            return try await self.verifySetupProvider(provider, requestID: requestID)
+        }
+    }
+
+    func verifySetupProvider(
+        _ provider: any AIProvider,
+        requestID: UUID
+    ) async throws -> ProviderConnectionChecker.Result {
+        guard isForeground else { throw CancellationError() }
+        let box = SetupVerificationBox()
+        let setupID = UUID()
+        let ticket = scheduler.enqueueSetup(id: requestID, setupID: setupID) { [weak self] in
+            guard let self else {
+                box.result = .failure(CancellationError())
+                return
+            }
+            let startedAt = Date.now
+            do {
+                let result = try await ProviderConnectionChecker.verify(provider: provider, requestID: requestID)
+                let attempt = AIRequestAttempt(
+                    attemptID: UUID(), requestID: requestID, selection: provider.selection,
+                    modelName: provider.modelName, startedAt: startedAt, endedAt: .now,
+                    outcome: .succeeded, usage: result.usage,
+                    inputCharacterCount: result.inputCharacterCount,
+                    outputCharacterCount: result.outputCharacterCount,
+                    hasImage: false, errorCode: nil
+                )
+                _ = self.ledger.recordAttempt(
+                    attempt, sessionID: nil, requestKind: "connection_test", settings: self.settings
+                )
+                box.result = .success(result)
+            } catch {
+                let cancelled = Task.isCancelled || error is CancellationError
+                let attempt = AIRequestAttempt(
+                    attemptID: UUID(), requestID: requestID, selection: provider.selection,
+                    modelName: provider.modelName, startedAt: startedAt, endedAt: .now,
+                    outcome: cancelled ? .cancelled : .failed, usage: nil,
+                    inputCharacterCount: 0, outputCharacterCount: 0, hasImage: false,
+                    errorCode: SafeErrorCode.classify(error)
+                )
+                _ = self.ledger.recordAttempt(
+                    attempt, sessionID: nil, requestKind: "connection_test", settings: self.settings
+                )
+                box.result = .failure(cancelled ? CancellationError() : error)
+            }
+        } onCancel: {
+            if box.result == nil { box.result = .failure(CancellationError()) }
+        }
+
+        return try await withTaskCancellationHandler {
+            await ticket.wait()
+            try Task.checkCancellation()
+            guard let result = box.result else { throw CancellationError() }
+            return try result.get()
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.scheduler.cancel(requestID) }
+        }
+    }
+
     func endSession() {
         stopAllListening()
         scheduler.endSession()
@@ -560,7 +624,9 @@ final class SessionStore: ObservableObject {
         guard isForeground, let session = currentSession, session.endedAt == nil else { return nil }
         let registry = ProviderRegistry(settings: settings)
         let primary = providerFactory?(settings.primaryProvider) ?? registry.provider(settings.primaryProvider, snapshotCredentials: true)
-        let reserve = settings.mockMode ? nil : (providerFactory?(settings.fallbackProvider) ?? registry.provider(settings.fallbackProvider, snapshotCredentials: true))
+        let reserve = settings.mockMode || !settings.latencyFallbackEnabled
+            ? nil
+            : (providerFactory?(settings.fallbackProvider) ?? registry.provider(settings.fallbackProvider, snapshotCredentials: true))
         // A vision request may not silently turn into OCR-only on fallback.
         let upload = primary.capabilities.supportsImages ? imageJPEG : nil
         let fallback = upload != nil && reserve?.capabilities.supportsImages != true ? nil : reserve
@@ -735,6 +801,11 @@ final class SessionStore: ObservableObject {
     private func updateIdleTimer() {
         UIApplication.shared.isIdleTimerDisabled = isListening || isConversationListening
     }
+}
+
+@MainActor
+private final class SetupVerificationBox {
+    var result: Result<ProviderConnectionChecker.Result, Error>?
 }
 
 private extension Duration {

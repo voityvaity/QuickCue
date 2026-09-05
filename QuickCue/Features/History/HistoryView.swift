@@ -217,7 +217,7 @@ struct HistoryView: View {
             conversationMessages.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
             answers.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
             transcripts.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
-            usage.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
+            usage.filter { $0.sessionID.map(ids.contains) ?? false }.forEach { modelContext.delete($0) }
             sessions.filter { ids.contains($0.id) }.forEach { modelContext.delete($0) }
             try modelContext.save()
         } catch {

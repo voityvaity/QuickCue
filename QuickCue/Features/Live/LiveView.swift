@@ -12,6 +12,7 @@ struct LiveView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 14) {
+                    dailyUsageSummary
                     if let session = store.currentSession {
                         sessionSummary(session)
                     }
@@ -50,6 +51,28 @@ struct LiveView: View {
                 Text(store.alertMessage ?? "")
             }
         }
+    }
+
+    private var dailyUsageSummary: some View {
+        let interval = Calendar.current.dateInterval(of: .day, for: .now)
+        let records = usage.filter { item in
+            guard let interval else { return false }
+            return item.createdAt >= interval.start && item.createdAt < interval.end
+        }
+        let summary = UsageCostSummary(records: records)
+        return DisclosureGroup {
+            if let detail = summary.detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            LabeledContent("Расход QuickCue сегодня", value: summary.title)
+                .font(.caption.weight(.medium))
+        }
+        .padding(12)
+        .background(Color.indigo.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func sessionSummary(_ session: SessionRecord) -> some View {

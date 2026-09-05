@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var store: SessionStore
     @State private var createdProviderID: UUID?
 
     var body: some View {
@@ -9,6 +10,8 @@ struct SettingsView: View {
             Form {
                 Section {
                     Toggle("Тестовый режим", isOn: $settings.mockMode)
+
+                    Toggle("Подключить резерв", isOn: $settings.latencyFallbackEnabled)
 
                     Picker("Основной AI", selection: $settings.primaryProvider) {
                         ForEach(settings.availableProviders) { selection in
@@ -24,12 +27,17 @@ struct SettingsView: View {
                 } header: {
                     Text("Маршрутизация ответов")
                 } footer: {
-                    Text(routingExplanation)
+                    Text(routingExplanation + " Резерв иногда означает два платных запроса; на новой установке он выключен до вашего выбора.")
                 }
 
                 Section {
                     NavigationLink {
-                        ProviderSetupView(settings: settings)
+                        ProviderSetupView(
+                            settings: settings,
+                            verifier: { provider, requestID in
+                                try await store.verifySetupProvider(provider, requestID: requestID)
+                            }
+                        )
                     } label: {
                         Label("Подключить AI за три шага", systemImage: "bolt.badge.checkmark.fill")
                             .fontWeight(.semibold)
@@ -204,6 +212,7 @@ private enum CustomModelDiscoveryState: Equatable {
 
 private struct BuiltInProviderSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var store: SessionStore
     @Environment(\.scenePhase) private var scenePhase
     let provider: ProviderKind
 
@@ -340,7 +349,7 @@ private struct BuiltInProviderSettingsView: View {
         settings.setModelName(modelName, for: selection)
         testState = .testing
         do {
-            let milliseconds = try await runProviderTest(selection, settings: settings)
+            let milliseconds = try await runProviderTest(selection, store: store)
             guard !Task.isCancelled else { return }
             testState = .success(milliseconds: milliseconds)
         } catch {
@@ -358,6 +367,7 @@ private struct BuiltInProviderSettingsView: View {
 
 private struct CustomProviderSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var store: SessionStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     let providerID: UUID
@@ -684,7 +694,7 @@ private struct CustomProviderSettingsView: View {
         guard saveDraft() else { return }
         testState = .testing
         do {
-            let milliseconds = try await runProviderTest(draft.selection, settings: settings)
+            let milliseconds = try await runProviderTest(draft.selection, store: store)
             guard !Task.isCancelled else { return }
             settings.primaryProvider = draft.selection
             settings.mockMode = false
@@ -862,9 +872,9 @@ private struct SpeakerDetectionInfoView: View {
 @MainActor
 private func runProviderTest(
     _ selection: ProviderSelection,
-    settings: AppSettings
+    store: SessionStore
 ) async throws -> Int {
-    let report = await ProviderConnectionChecker.check(selection: selection, settings: settings)
+    let report = await store.checkProviderConnection(selection)
     guard report.state == .verified else {
         throw ProviderTestFailure(category: report.errorCategory)
     }

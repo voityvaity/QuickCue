@@ -9,7 +9,7 @@ struct UsageLedger {
     @discardableResult
     func recordAttempt(
         _ attempt: AIRequestAttempt,
-        sessionID: UUID,
+        sessionID: UUID?,
         requestKind: String,
         settings: AppSettings
     ) -> UsageRecord {
@@ -57,7 +57,10 @@ struct UsageLedger {
             row.costSourceRaw = "not_sent"
         } else if let usage, inputRate.isFinite, outputRate.isFinite, inputRate > 0, outputRate > 0 {
             row.estimatedCostRUB = settings.estimatedCostRUB(for: usage, provider: attempt.selection)
-            row.costSourceRaw = "estimated"
+            row.costSourceRaw = "calculated"
+            row.costCurrencyCode = "RUB"
+            row.pricingSnapshotDate = attempt.startedAt
+            row.pricingModelName = attempt.modelName
         } else {
             row.costSourceRaw = "unknown"
         }
@@ -71,7 +74,7 @@ struct UsageLedger {
     }
 
     func record(
-        sessionID: UUID,
+        sessionID: UUID?,
         provider: ProviderKind,
         kind: String,
         usage: TokenUsage,
@@ -82,7 +85,11 @@ struct UsageLedger {
         row.outputTokens = max(0, usage.outputTokens)
         row.estimatedCostRUB = estimatedCostRUB.isFinite ? max(0, estimatedCostRUB) : 0
         row.usageSourceRaw = "reported"
-        row.costSourceRaw = provider == .mock ? "free_mock" : (row.estimatedCostRUB > 0 ? "estimated" : "unknown")
+        row.costSourceRaw = provider == .mock ? "free_mock" : (row.estimatedCostRUB > 0 ? "calculated" : "unknown")
+        if row.costSourceRaw == "calculated" {
+            row.costCurrencyCode = "RUB"
+            row.pricingSnapshotDate = .now
+        }
         modelContext.insert(row)
         try? modelContext.save()
     }

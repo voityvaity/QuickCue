@@ -100,9 +100,12 @@ enum ProviderFailure {
 
 @MainActor
 enum ProviderConnectionChecker {
+    typealias Verifier = @MainActor (any AIProvider, UUID) async throws -> Result
+
     static func check(
         selection: ProviderSelection,
-        settings: AppSettings
+        settings: AppSettings,
+        verifier: Verifier? = nil
     ) async -> ProviderConnectionReport {
         let client = ProviderRegistry(settings: settings).provider(selection, honorMockMode: false, snapshotCredentials: true)
         let model = client.modelName
@@ -115,7 +118,9 @@ enum ProviderConnectionChecker {
         report.requestID = requestID
         report.buildIdentity = .current
         do {
-            let result = try await verify(provider: client, requestID: requestID)
+            let result = try await (verifier ?? { provider, requestID in
+                try await verify(provider: provider, requestID: requestID)
+            })(client, requestID)
             try Task.checkCancellation()
             report.state = .verified
             report.firstTokenMilliseconds = result.firstTokenMilliseconds
@@ -137,6 +142,23 @@ enum ProviderConnectionChecker {
     struct Result: Sendable {
         let firstTokenMilliseconds: Int
         let totalMilliseconds: Int
+        let usage: TokenUsage?
+        let inputCharacterCount: Int
+        let outputCharacterCount: Int
+
+        init(
+            firstTokenMilliseconds: Int,
+            totalMilliseconds: Int,
+            usage: TokenUsage? = nil,
+            inputCharacterCount: Int = 0,
+            outputCharacterCount: Int = 0
+        ) {
+            self.firstTokenMilliseconds = firstTokenMilliseconds
+            self.totalMilliseconds = totalMilliseconds
+            self.usage = usage
+            self.inputCharacterCount = inputCharacterCount
+            self.outputCharacterCount = outputCharacterCount
+        }
     }
 
     static func verify(provider: any AIProvider, timeoutSeconds: Double = 15, requestID: UUID = UUID()) async throws -> Result {
@@ -151,15 +173,18 @@ enum ProviderConnectionChecker {
                 let started = clock.now
                 var firstToken: Int?
                 var completed = false
+                var usage: TokenUsage?
+                var outputCharacterCount = 0
                 for try await event in provider.stream(request: request) {
                     try Task.checkCancellation()
                     switch event {
                     case .textDelta(let text):
+                        outputCharacterCount += text.count
                         if firstToken == nil, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             firstToken = milliseconds(started.duration(to: clock.now))
                         }
                     case .completed: completed = true
-                    case .usage: break
+                    case .usage(let value): usage = value
                     }
                 }
                 try Task.checkCancellation()
@@ -167,7 +192,13 @@ enum ProviderConnectionChecker {
                 guard completed else { throw AIProviderError.incompleteResponse }
                 LatencyLogger().firstToken(provider: provider.kind, milliseconds: firstToken, requestID: requestID)
                 LatencyLogger().completed(provider: provider.kind, milliseconds: milliseconds(started.duration(to: clock.now)), requestID: requestID)
-                return Result(firstTokenMilliseconds: firstToken, totalMilliseconds: milliseconds(started.duration(to: clock.now)))
+                return Result(
+                    firstTokenMilliseconds: firstToken,
+                    totalMilliseconds: milliseconds(started.duration(to: clock.now)),
+                    usage: usage,
+                    inputCharacterCount: PromptFactory.userText(for: request).count + PromptFactory.systemText(for: request).count,
+                    outputCharacterCount: outputCharacterCount
+                )
             }
             group.addTask {
                 let seconds = timeoutSeconds.isFinite ? min(60, max(0.01, timeoutSeconds)) : 15

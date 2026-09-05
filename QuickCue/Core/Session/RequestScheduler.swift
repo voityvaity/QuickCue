@@ -1,6 +1,11 @@
 import Foundation
 
-/// One foreground, session-scoped queue for every user-visible AI request.
+enum RequestWorkOwner: Hashable, Sendable {
+    case session(UUID)
+    case setup(UUID)
+}
+
+/// One foreground queue shared by conversation and generative setup work.
 @MainActor
 final class RequestScheduler {
     @MainActor
@@ -27,7 +32,7 @@ final class RequestScheduler {
 
     private struct Item {
         let id: UUID
-        let sessionID: UUID
+        let owner: RequestWorkOwner
         let ticket: Ticket
         let operation: @MainActor () async -> Void
         let onCancel: @MainActor () -> Void
@@ -53,8 +58,9 @@ final class RequestScheduler {
     }
 
     func activate(sessionID: UUID) {
-        self.sessionID = nil
-        cancelAll()
+        if let previous = self.sessionID {
+            cancel(owner: .session(previous))
+        }
         self.sessionID = sessionID
     }
 
@@ -72,7 +78,26 @@ final class RequestScheduler {
             ticket.finish()
             return ticket
         }
-        pending.append(Item(id: id, sessionID: sessionID, ticket: ticket, operation: operation, onCancel: onCancel))
+        pending.append(Item(id: id, owner: .session(sessionID), ticket: ticket, operation: operation, onCancel: onCancel))
+        drain()
+        return ticket
+    }
+
+    @discardableResult
+    func enqueueSetup(
+        id: UUID = UUID(),
+        setupID: UUID,
+        operation: @escaping @MainActor () async -> Void,
+        onCancel: @escaping @MainActor () -> Void = {}
+    ) -> Ticket {
+        let ticket = Ticket(id: id)
+        guard !isCancellingAll, running[id] == nil,
+              !pending.contains(where: { $0.id == id }) else {
+            onCancel()
+            ticket.finish()
+            return ticket
+        }
+        pending.append(Item(id: id, owner: .setup(setupID), ticket: ticket, operation: operation, onCancel: onCancel))
         drain()
         return ticket
     }
@@ -105,15 +130,29 @@ final class RequestScheduler {
         isCancellingAll = false
     }
 
+    func cancel(owner: RequestWorkOwner) {
+        guard !isCancellingAll else { return }
+        isCancellingAll = true
+        let queued = pending.filter { $0.owner == owner }
+        pending.removeAll { $0.owner == owner }
+        let active = running.values.filter { $0.item.owner == owner }
+        for job in active { running[job.item.id] = nil }
+        queued.forEach { $0.onCancel(); $0.ticket.finish() }
+        active.forEach { $0.task.cancel(); $0.item.onCancel(); $0.item.ticket.finish() }
+        isCancellingAll = false
+        drain()
+    }
+
     func endSession() {
+        let previous = sessionID
         sessionID = nil
-        cancelAll()
+        if let previous { cancel(owner: .session(previous)) }
     }
 
     private func drain() {
         while running.count < maximumConcurrentRequests, !pending.isEmpty {
             let item = pending.removeFirst()
-            guard item.sessionID == sessionID else {
+            guard isEligible(item.owner) else {
                 item.onCancel()
                 item.ticket.finish()
                 continue
@@ -137,4 +176,11 @@ final class RequestScheduler {
     }
 
     private func notifyCounts() { onCountsChanged?(activeCount, pendingCount) }
+
+    private func isEligible(_ owner: RequestWorkOwner) -> Bool {
+        switch owner {
+        case .session(let id): id == sessionID
+        case .setup: true
+        }
+    }
 }

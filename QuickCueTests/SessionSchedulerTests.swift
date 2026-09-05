@@ -121,6 +121,42 @@ final class SessionSchedulerTests: XCTestCase {
         await next.wait()
         XCTAssertEqual(scheduler.activeCount, 0)
     }
+
+    func testSetupAndSessionWorkShareLimitButSessionEndKeepsSetup() async {
+        let scheduler = RequestScheduler(maximumConcurrentRequests: 1)
+        let session = UUID()
+        let setupID = UUID()
+        let gate = SchedulerTestGate()
+        scheduler.activate(sessionID: session)
+        var setupStarted = false
+        let answer = scheduler.enqueue(sessionID: session) { await gate.wait() }
+        let setup = scheduler.enqueueSetup(setupID: setupID) { setupStarted = true }
+        await Task.yield()
+        XCTAssertEqual(scheduler.activeCount, 1)
+        XCTAssertEqual(scheduler.pendingCount, 1)
+
+        scheduler.endSession()
+        await answer.wait()
+        await setup.wait()
+        XCTAssertTrue(setupStarted)
+        XCTAssertEqual(scheduler.activeCount, 0)
+    }
+
+    func testInactiveStyleCancelAllCancelsSetupAndSessionOwners() async {
+        let scheduler = RequestScheduler(maximumConcurrentRequests: 1)
+        let session = UUID()
+        scheduler.activate(sessionID: session)
+        let gate = SchedulerTestGate()
+        var cancelled = 0
+        let answer = scheduler.enqueue(sessionID: session, operation: { await gate.wait() }, onCancel: { cancelled += 1 })
+        let setup = scheduler.enqueueSetup(setupID: UUID(), operation: {}, onCancel: { cancelled += 1 })
+        scheduler.cancelAll()
+        await answer.wait()
+        await setup.wait()
+        XCTAssertEqual(cancelled, 2)
+        XCTAssertEqual(scheduler.activeCount, 0)
+        XCTAssertEqual(scheduler.pendingCount, 0)
+    }
 }
 
 @MainActor

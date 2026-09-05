@@ -8,8 +8,8 @@ struct ProviderSetupView: View {
     @State private var showKeyEditor = false
     @State private var showTechnicalDetails = false
 
-    init(settings: AppSettings) {
-        _coordinator = StateObject(wrappedValue: ProviderSetupCoordinator(settings: settings))
+    init(settings: AppSettings, verifier: @escaping ProviderSetupCoordinator.Verifier) {
+        _coordinator = StateObject(wrappedValue: ProviderSetupCoordinator(settings: settings, verifier: verifier))
     }
 
     var body: some View {

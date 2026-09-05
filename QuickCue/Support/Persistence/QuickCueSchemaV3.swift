@@ -1,37 +1,12 @@
 import Foundation
 import SwiftData
 
-enum ConversationSpeaker: String, Codable, CaseIterable, Sendable {
-    case me
-    case partner
-    case assistant
-
-    var title: String {
-        switch self {
-        case .me: "Вы"
-        case .partner: "Собеседник"
-        case .assistant: "QuickCue"
-        }
+/// Current schema. V1 and V2 are frozen migration inputs and must never be edited.
+enum QuickCueSchemaV3: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(3, 0, 0) }
+    static var models: [any PersistentModel.Type] {
+        [SessionRecord.self, TranscriptRecord.self, AnswerRecord.self, PhotoRecord.self, UsageRecord.self, ConversationMessageRecord.self]
     }
-}
-
-enum ConversationMessageKind: String, Codable, Sendable {
-    case speech
-    case answer
-    case photo
-    case error
-}
-
-typealias SessionRecord = QuickCueSchemaV3.SessionRecord
-typealias TranscriptRecord = QuickCueSchemaV3.TranscriptRecord
-typealias AnswerRecord = QuickCueSchemaV3.AnswerRecord
-typealias PhotoRecord = QuickCueSchemaV3.PhotoRecord
-typealias UsageRecord = QuickCueSchemaV3.UsageRecord
-typealias ConversationMessageRecord = QuickCueSchemaV3.ConversationMessageRecord
-
-enum QuickCueSchemaV2: VersionedSchema {
-    static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
-    static var models: [any PersistentModel.Type] { [SessionRecord.self, TranscriptRecord.self, AnswerRecord.self, PhotoRecord.self, UsageRecord.self, ConversationMessageRecord.self] }
 
     @Model
     final class SessionRecord {
@@ -95,15 +70,9 @@ enum QuickCueSchemaV2: VersionedSchema {
         var promptVersion: String?
 
         init(
-            id: UUID = UUID(),
-            sessionID: UUID,
-            question: String,
-            answer: String = "",
-            provider: ProviderKind,
-            modelName: String,
-            requestKind: AnswerMode = .concise,
-            status: AnswerStatus = .completed,
-            firstTokenMilliseconds: Int = 0,
+            id: UUID = UUID(), sessionID: UUID, question: String, answer: String = "",
+            provider: ProviderKind, modelName: String, requestKind: AnswerMode = .concise,
+            status: AnswerStatus = .completed, firstTokenMilliseconds: Int = 0,
             totalMilliseconds: Int = 0
         ) {
             self.id = id
@@ -138,14 +107,9 @@ enum QuickCueSchemaV2: VersionedSchema {
         var answerID: UUID?
 
         init(
-            sessionID: UUID,
-            speaker: ConversationSpeaker,
-            kind: ConversationMessageKind,
-            text: String,
-            status: AnswerStatus = .completed,
-            confidence: Double = 0,
-            photoRelativePath: String? = nil,
-            answerID: UUID? = nil
+            sessionID: UUID, speaker: ConversationSpeaker, kind: ConversationMessageKind,
+            text: String, status: AnswerStatus = .completed, confidence: Double = 0,
+            photoRelativePath: String? = nil, answerID: UUID? = nil
         ) {
             self.id = UUID()
             self.sessionID = sessionID
@@ -183,23 +147,32 @@ enum QuickCueSchemaV2: VersionedSchema {
     final class UsageRecord {
         @Attribute(.unique) var id: UUID
         var createdAt: Date
-        var sessionID: UUID
+        /// Nil means setup/connection work that is intentionally outside conversation history.
+        var sessionID: UUID?
         var providerRaw: String
         var requestKind: String
         var inputTokens: Int
         var outputTokens: Int
+        /// Known RUB subtotal only. Read `costSourceRaw` before presenting it as a total.
         var estimatedCostRUB: Double
         var requestID: UUID?
         var attemptID: UUID?
         var providerSelectionRaw: String?
         var modelName: String?
         var outcomeRaw: String?
+        /// reported / estimated / unknown
         var usageSourceRaw: String?
+        /// api_reported / calculated / unknown / free_mock / not_sent
         var costSourceRaw: String?
         var errorCode: String?
         var durationMilliseconds: Int?
+        var cachedInputTokens: Int?
+        var providerReportedCost: Double?
+        var costCurrencyCode: String?
+        var pricingSnapshotDate: Date?
+        var pricingModelName: String?
 
-        init(sessionID: UUID, provider: ProviderKind, requestKind: String) {
+        init(sessionID: UUID?, provider: ProviderKind, requestKind: String) {
             self.id = UUID()
             self.createdAt = .now
             self.sessionID = sessionID
@@ -209,15 +182,5 @@ enum QuickCueSchemaV2: VersionedSchema {
             self.outputTokens = 0
             self.estimatedCostRUB = 0
         }
-    }
-}
-
-enum QuickCueMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [QuickCueSchemaV1.self, QuickCueSchemaV2.self, QuickCueSchemaV3.self] }
-    static var stages: [MigrationStage] {
-        [
-            .lightweight(fromVersion: QuickCueSchemaV1.self, toVersion: QuickCueSchemaV2.self),
-            .lightweight(fromVersion: QuickCueSchemaV2.self, toVersion: QuickCueSchemaV3.self),
-        ]
     }
 }
