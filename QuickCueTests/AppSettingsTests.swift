@@ -136,6 +136,18 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(try snapshot(), "old-fixture")
         XCTAssertNil(try ProviderRegistry.snapshotCredential(account: "a", from: secrets)())
     }
+
+    func testManualModelSelectionIsExplicitEvenWhenItMatchesRecommendation() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        let model = settings.modelName(for: .deepSeek)
+
+        XCTAssertEqual(settings.modelSelectionPolicy(for: .builtIn(.deepSeek)), .recommended)
+        settings.setModelName(model, for: .deepSeek)
+        XCTAssertEqual(settings.modelSelectionPolicy(for: .builtIn(.deepSeek)), .explicit(model))
+    }
 }
 
 private final class MutableFixtureSecrets: SecretStore, @unchecked Sendable {

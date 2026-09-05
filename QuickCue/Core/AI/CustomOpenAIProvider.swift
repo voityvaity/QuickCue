@@ -101,4 +101,22 @@ struct CustomOpenAIProvider: AIProvider {
         }
         return url
     }
+
+    static func modelsEndpoint(from input: String) throws -> URL {
+        let chatEndpoint = try chatCompletionsEndpoint(from: input)
+        guard var components = URLComponents(url: chatEndpoint, resolvingAgainstBaseURL: false) else {
+            throw AIProviderError.invalidConfiguration("Не удалось составить адрес каталога моделей.")
+        }
+        var parts = components.path.split(separator: "/").map(String.init)
+        guard parts.count >= 2, Array(parts.suffix(2)) == ["chat", "completions"] else {
+            throw AIProviderError.invalidConfiguration("Не удалось составить адрес каталога моделей.")
+        }
+        parts.removeLast(2)
+        parts.append("models")
+        components.path = "/" + parts.joined(separator: "/")
+        guard let url = components.url else {
+            throw AIProviderError.invalidConfiguration("Не удалось составить адрес каталога моделей.")
+        }
+        return url
+    }
 }

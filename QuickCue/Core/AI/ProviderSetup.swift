@@ -25,6 +25,7 @@ struct ProviderPreset: Identifiable, Sendable {
 enum ProviderSetupState: Equatable {
     case editing
     case needsAdditionalFields
+    case discovering
     case testing
     case connected(ProviderConnectionReport)
     case failed(String)
@@ -37,6 +38,7 @@ struct ProviderSetupActivation: Codable, Equatable, Sendable {
     let yandexFolderID: String?
     let candidateAccount: String
     let report: ProviderConnectionReport
+    var modelSelectionPolicy: ModelSelectionPolicy? = nil
     var credentialCopied = false
 
     var isValid: Bool {
@@ -49,6 +51,8 @@ struct ProviderSetupActivation: Codable, Equatable, Sendable {
                 || !(yandexFolderID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && report.state == .verified
             && report.modelName == modelName
+            && (modelSelectionPolicy == nil || modelSelectionPolicy?.resolvedExplicitModel == nil
+                || modelSelectionPolicy?.resolvedExplicitModel == modelName)
     }
 }
 
@@ -97,7 +101,8 @@ struct ProviderSetupRecoveryStore {
             pending.selection,
             modelName: pending.modelName,
             yandexFolderID: pending.yandexFolderID,
-            report: pending.report
+            report: pending.report,
+            modelSelectionPolicy: pending.modelSelectionPolicy
         )
         defaults.removeObject(forKey: Self.markerKey)
         try? secretStore.delete(account: pending.candidateAccount)
@@ -133,6 +138,16 @@ private extension ProviderSetupActivation {
             && yandexFolderID == other.yandexFolderID
             && candidateAccount == other.candidateAccount
             && report == other.report
+            && modelSelectionPolicy == other.modelSelectionPolicy
+    }
+}
+
+private extension ModelSelectionPolicy {
+    var resolvedExplicitModel: String? {
+        if case .explicit(let model) = self {
+            return model.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 }
 
@@ -151,10 +166,17 @@ enum ProviderSetupError: LocalizedError {
 @MainActor
 final class ProviderSetupCoordinator: ObservableObject {
     typealias Verifier = @MainActor (any AIProvider, UUID) async throws -> ProviderConnectionChecker.Result
+    typealias MetadataLoader = @MainActor (
+        ProviderSelection,
+        CustomProviderProfile?,
+        CredentialReader
+    ) async throws -> MetadataResult
 
     @Published private(set) var selectedProvider: ProviderKind = .deepSeek
     @Published private(set) var state: ProviderSetupState = .editing
     @Published private(set) var credentialLength = 0
+    @Published private(set) var resolvedModelName = ""
+    @Published private(set) var metadataStatus: ProviderMetadataStatus = .notRequested
     @Published var yandexFolderID = "" {
         didSet {
             guard oldValue != yandexFolderID else { return }
@@ -171,6 +193,8 @@ final class ProviderSetupCoordinator: ObservableObject {
     private let secretStore: SecretStore
     private let recoveryStore: ProviderSetupRecoveryStore
     private let verifier: Verifier
+    private let metadataLoader: MetadataLoader
+    private let metadataCache: ProviderMetadataCache
     private var revision = UUID()
     private var connectionTask: Task<Void, Never>?
     private var activeOperationRevision: UUID?
@@ -181,27 +205,37 @@ final class ProviderSetupCoordinator: ObservableObject {
         defaults: UserDefaults = .standard,
         verifier: @escaping Verifier = { provider, requestID in
             try await ProviderConnectionChecker.verify(provider: provider, requestID: requestID)
-        }
+        },
+        metadataLoader: MetadataLoader? = nil
     ) {
         self.settings = settings
         self.secretStore = secretStore
         self.recoveryStore = ProviderSetupRecoveryStore(defaults: defaults)
         self.verifier = verifier
+        let metadataClient = ProviderMetadataClient()
+        self.metadataLoader = metadataLoader ?? { selection, profile, credential in
+            try await metadataClient.metadata(for: selection, customProfile: profile, credential: credential)
+        }
+        self.metadataCache = ProviderMetadataCache(defaults: defaults)
         self.yandexFolderID = settings.yandexFolderID
         self.recoveryStore.recoverIfNeeded(settings: settings, secretStore: secretStore)
         self.yandexFolderID = settings.yandexFolderID
+        self.resolvedModelName = settings.modelName(for: selectedProvider)
     }
 
     var preset: ProviderPreset { ProviderPreset.preset(for: selectedProvider)! }
     var canConnect: Bool {
         credentialLength > 0
-            && state != .testing
+            && !isBusy
             && (!preset.requiresFolderID || !trimmedFolderID.isEmpty)
     }
-    var modelName: String { settings.modelName(for: selectedProvider) }
+    var modelName: String { resolvedModelName }
+    var isBusy: Bool {
+        state == .discovering || state == .testing
+    }
 
     func select(_ provider: ProviderKind) {
-        guard state != .testing,
+        guard !isBusy,
               ProviderPreset.preset(for: provider) != nil,
               provider != selectedProvider else { return }
         discardCandidate()
@@ -209,6 +243,8 @@ final class ProviderSetupCoordinator: ObservableObject {
         candidateAccount = Self.makeCandidateAccount()
         credentialLength = 0
         yandexFolderID = provider == .yandexGPT ? settings.yandexFolderID : ""
+        resolvedModelName = settings.modelName(for: provider)
+        metadataStatus = .notRequested
         revision = UUID()
         state = .editing
     }
@@ -228,7 +264,7 @@ final class ProviderSetupCoordinator: ObservableObject {
     }
 
     func connect() {
-        guard state != .testing, connectionTask == nil else { return }
+        guard !isBusy, connectionTask == nil else { return }
         guard credentialLength > 0 else {
             state = .failed("credential_missing")
             return
@@ -240,8 +276,9 @@ final class ProviderSetupCoordinator: ObservableObject {
 
         let operationRevision = revision
         let selection = ProviderSelection.builtIn(selectedProvider)
-        let model = modelName
-        guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let initialModel = settings.modelName(for: selection)
+        let selectionPolicy = settings.modelSelectionPolicy(for: selection)
+        guard !initialModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             state = .failed("model_or_endpoint")
             return
         }
@@ -249,18 +286,18 @@ final class ProviderSetupCoordinator: ObservableObject {
         let requestID = UUID()
         let account = candidateAccount
         let reader = ProviderRegistry.snapshotCredential(account: account, from: secretStore)
-        let provider = makeProvider(kind: selectedProvider, modelName: model, folderID: folderID, credential: reader)
-        state = .testing
+        state = shouldDiscover(selection: selection, policy: selectionPolicy) ? .discovering : .testing
         activeOperationRevision = operationRevision
         connectionTask = Task { [weak self] in
             await self?.performConnection(
-                provider: provider,
                 operationRevision: operationRevision,
                 selection: selection,
-                model: model,
+                initialModel: initialModel,
+                selectionPolicy: selectionPolicy,
                 folderID: folderID,
                 requestID: requestID,
-                account: account
+                account: account,
+                credential: reader
             )
         }
     }
@@ -271,13 +308,14 @@ final class ProviderSetupCoordinator: ObservableObject {
     }
 
     private func performConnection(
-        provider: any AIProvider,
         operationRevision: UUID,
         selection: ProviderSelection,
-        model: String,
+        initialModel: String,
+        selectionPolicy: ModelSelectionPolicy,
         folderID: String?,
         requestID: UUID,
-        account: String
+        account: String,
+        credential: @escaping CredentialReader
     ) async {
         defer {
             if activeOperationRevision == operationRevision {
@@ -286,6 +324,25 @@ final class ProviderSetupCoordinator: ObservableObject {
             }
         }
         do {
+            let model = try await resolveModel(
+                initialModel: initialModel,
+                selection: selection,
+                policy: selectionPolicy,
+                credential: credential
+            )
+            try Task.checkCancellation()
+            guard revision == operationRevision, account == candidateAccount else {
+                if isBusy { state = .editing }
+                return
+            }
+            resolvedModelName = model
+            state = .testing
+            let provider = makeProvider(
+                kind: selection.kind,
+                modelName: model,
+                folderID: folderID,
+                credential: credential
+            )
             let result = try await verifier(provider, requestID)
             try Task.checkCancellation()
             guard revision == operationRevision, account == candidateAccount else {
@@ -307,7 +364,8 @@ final class ProviderSetupCoordinator: ObservableObject {
                 modelName: model,
                 yandexFolderID: folderID,
                 candidateAccount: account,
-                report: report
+                report: report,
+                modelSelectionPolicy: selectionPolicy
             )
             try recoveryStore.begin(activation)
             try recoveryStore.complete(activation, settings: settings, secretStore: secretStore)
@@ -332,6 +390,53 @@ final class ProviderSetupCoordinator: ObservableObject {
             return
         } else {
             state = .editing
+        }
+    }
+
+    private func shouldDiscover(selection: ProviderSelection, policy: ModelSelectionPolicy) -> Bool {
+        guard case .recommended = policy else { return false }
+        return ProviderMetadataClient.supportsDiscovery(for: selection)
+    }
+
+    private func resolveModel(
+        initialModel: String,
+        selection: ProviderSelection,
+        policy: ModelSelectionPolicy,
+        credential: @escaping CredentialReader
+    ) async throws -> String {
+        if case .explicit(let explicitModel) = policy {
+            metadataStatus = .explicit
+            return explicitModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard ProviderMetadataClient.supportsDiscovery(for: selection) else {
+            metadataStatus = .unsupported
+            return initialModel
+        }
+        if let cached = metadataCache.freshSnapshot(for: selection) {
+            if let selected = ProviderModelSelector.select(from: cached, policy: policy, provider: selection.kind) {
+                metadataStatus = .cached
+                return selected
+            }
+            metadataStatus = .noRecommendedModel
+            return initialModel
+        }
+
+        let result = try await metadataLoader(selection, nil, credential)
+        switch result {
+        case .available(let snapshot):
+            metadataCache.save(snapshot, for: selection)
+            guard let selected = ProviderModelSelector.select(from: snapshot, policy: policy, provider: selection.kind) else {
+                metadataStatus = .noRecommendedModel
+                return initialModel
+            }
+            metadataStatus = .discovered
+            return selected
+        case .unsupported:
+            metadataStatus = .unsupported
+            return initialModel
+        case .unavailable(let reason):
+            metadataStatus = .unavailable(reason)
+            return initialModel
         }
     }
 

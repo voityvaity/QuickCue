@@ -20,7 +20,7 @@ struct ProviderSetupView: View {
                         Text(preset.kind.title).tag(preset.kind)
                     }
                 }
-                .disabled(coordinator.state == .testing)
+                .disabled(coordinator.isBusy)
 
                 LabeledContent {
                     Text(coordinator.preset.destinationHost)
@@ -44,7 +44,7 @@ struct ProviderSetupView: View {
                         systemImage: "key.viewfinder"
                     )
                 }
-                .disabled(coordinator.state == .testing)
+                .disabled(coordinator.isBusy)
 
                 if coordinator.credentialLength > 0 {
                     Label(
@@ -58,7 +58,7 @@ struct ProviderSetupView: View {
                     TextField("Folder ID", text: $coordinator.yandexFolderID)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .disabled(coordinator.state == .testing)
+                        .disabled(coordinator.isBusy)
                     Text("Folder ID находится в Yandex Cloud. Отсутствие billing или прав будет показано отдельно от ошибки ключа.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -74,10 +74,10 @@ struct ProviderSetupView: View {
                     coordinator.connect()
                 } label: {
                     HStack {
-                        if coordinator.state == .testing {
+                        if coordinator.isBusy {
                             ProgressView().controlSize(.small)
                         }
-                        Text(coordinator.state == .testing ? "Проверяю полный ответ…" : "Подключить и использовать")
+                        Text(connectButtonTitle)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -88,6 +88,7 @@ struct ProviderSetupView: View {
 
                 DisclosureGroup("Технические подробности", isExpanded: $showTechnicalDetails) {
                     LabeledContent("Модель", value: coordinator.modelName)
+                    LabeledContent("Выбор модели", value: metadataStatusTitle)
                     LabeledContent("Получатель", value: coordinator.preset.destinationHost)
                     Text("Проверка выполняется только после нажатия кнопки выше и может списать небольшую сумму у провайдера.")
                         .font(.footnote)
@@ -126,6 +127,9 @@ struct ProviderSetupView: View {
         case .needsAdditionalFields:
             Label("Укажите Folder ID для YandexGPT.", systemImage: "info.circle.fill")
                 .foregroundStyle(.orange)
+        case .discovering:
+            Label("Подбираю доступную быструю модель…", systemImage: "list.bullet.rectangle")
+                .foregroundStyle(.secondary)
         case .testing:
             Label("Тестовый запрос отправлен только выбранному сервису.", systemImage: "arrow.up.circle")
                 .foregroundStyle(.secondary)
@@ -144,6 +148,26 @@ struct ProviderSetupView: View {
                 Button("Готово") { dismiss() }
                     .frame(maxWidth: .infinity)
             }
+        }
+    }
+
+    private var connectButtonTitle: String {
+        switch coordinator.state {
+        case .discovering: "Получаю список моделей…"
+        case .testing: "Проверяю полный ответ…"
+        default: "Подключить и использовать"
+        }
+    }
+
+    private var metadataStatusTitle: String {
+        switch coordinator.metadataStatus {
+        case .notRequested: "Встроенная рекомендация"
+        case .explicit: "Ваш ручной выбор"
+        case .cached: "Рекомендация из свежего каталога"
+        case .discovered: "Рекомендация из каталога"
+        case .unsupported: "Встроенная рекомендация"
+        case .unavailable: "Каталог недоступен — встроенная рекомендация"
+        case .noRecommendedModel: "Подходящей модели нет — встроенная рекомендация"
         }
     }
 

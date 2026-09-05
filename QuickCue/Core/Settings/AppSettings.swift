@@ -14,6 +14,7 @@ final class AppSettings: ObservableObject {
         static let contextMinutes = "settings.contextMinutes"
         static let yandexFolderID = "settings.yandexFolderID"
         static let customModels = "settings.customModels"
+        static let recommendedModels = "settings.recommendedModels.v1"
         static let inputRates = "settings.inputRates"
         static let outputRates = "settings.outputRates"
         static let systemPrompt = "settings.systemPrompt"
@@ -168,6 +169,22 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    func modelSelectionPolicy(for selection: ProviderSelection) -> ModelSelectionPolicy {
+        let model = modelName(for: selection)
+        if selection.customID != nil {
+            return .explicit(model)
+        }
+        let modelKey = "\(Key.customModels).\(selection.kind.rawValue)"
+        let recommendedKey = "\(Key.recommendedModels).\(selection.kind.rawValue)"
+        if defaults.string(forKey: recommendedKey) == model {
+            return .recommended
+        }
+        if defaults.object(forKey: modelKey) != nil {
+            return .explicit(model)
+        }
+        return .recommended
+    }
+
     func prompt(for profile: PromptProfileKind) -> String {
         switch profile {
         case .live: systemPrompt
@@ -206,10 +223,17 @@ final class AppSettings: ObservableObject {
         _ selection: ProviderSelection,
         modelName: String,
         yandexFolderID: String?,
-        report: ProviderConnectionReport
+        report: ProviderConnectionReport,
+        modelSelectionPolicy: ModelSelectionPolicy? = nil
     ) {
         guard selection.customID == nil, selection.kind != .mock, selection.kind != .custom else { return }
-        setModelName(modelName, for: selection)
+        switch modelSelectionPolicy ?? self.modelSelectionPolicy(for: selection) {
+        case .recommended:
+            setRecommendedModelName(modelName, for: selection.kind)
+        case .explicit(let explicitModel):
+            guard explicitModel.trimmingCharacters(in: .whitespacesAndNewlines) == modelName else { return }
+            setModelName(modelName, for: selection.kind)
+        }
         if selection.kind == .yandexGPT, let yandexFolderID {
             self.yandexFolderID = yandexFolderID
         }
@@ -236,8 +260,8 @@ final class AppSettings: ObservableObject {
 
     func setModelName(_ value: String, for selection: ProviderSelection) {
         let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard modelName(for: selection) != cleaned else { return }
         if var profile = customProvider(for: selection) {
+            guard modelName(for: selection) != cleaned else { return }
             profile.modelName = cleaned
             updateCustomProvider(profile)
         } else {
@@ -247,8 +271,31 @@ final class AppSettings: ObservableObject {
 
     func setModelName(_ value: String, for provider: ProviderKind) {
         let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard modelName(for: provider) != cleaned else { return }
-        defaults.set(cleaned, forKey: "\(Key.customModels).\(provider.rawValue)")
+        let recommendedKey = "\(Key.recommendedModels).\(provider.rawValue)"
+        defaults.removeObject(forKey: recommendedKey)
+        let modelKey = "\(Key.customModels).\(provider.rawValue)"
+        guard modelName(for: provider) != cleaned else {
+            defaults.set(cleaned, forKey: modelKey)
+            return
+        }
+        defaults.set(cleaned, forKey: modelKey)
+        markConnectionUnverified(.builtIn(provider))
+    }
+
+    private func setRecommendedModelName(_ value: String, for provider: ProviderKind) {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelKey = "\(Key.customModels).\(provider.rawValue)"
+        let recommendedKey = "\(Key.recommendedModels).\(provider.rawValue)"
+        if modelName(for: provider) == cleaned {
+            if defaults.object(forKey: modelKey) == nil {
+                defaults.removeObject(forKey: recommendedKey)
+            } else {
+                defaults.set(cleaned, forKey: recommendedKey)
+            }
+            return
+        }
+        defaults.set(cleaned, forKey: modelKey)
+        defaults.set(cleaned, forKey: recommendedKey)
         markConnectionUnverified(.builtIn(provider))
     }
 

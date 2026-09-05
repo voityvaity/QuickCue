@@ -99,7 +99,7 @@ struct SSETransport: Sendable {
 }
 
 /// URLSession may retain nonstandard secret headers on redirects: allow only same origin.
-private final class SameOriginRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class SameOriginRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
