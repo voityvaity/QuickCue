@@ -30,6 +30,93 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(answer.queueWaitMilliseconds ?? -1, 0)
     }
 
+    func testManualSpeakerModeUsesSelectedRoleAndLocksIt() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(
+            configureSettings: {
+                $0.speakerAttributionMode = .manual
+                $0.manualSpeakerRole = .partner
+                $0.answerTriggerPolicy = .manual
+            },
+            speechRecognizer: recognizer
+        )
+        defer { fixture.close() }
+
+        fixture.store.startConversationListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        recognizer.emit("Расскажите о проекте", isFinal: true)
+        let message = try XCTUnwrap(fixture.store.visibleConversationMessages.first)
+        XCTAssertEqual(message.speakerRaw, ConversationSpeaker.partner.rawValue)
+        XCTAssertEqual(message.speakerSourceRaw, SpeakerAttributionSource.manual.rawValue)
+        XCTAssertTrue(message.speakerManuallyLocked)
+        XCTAssertEqual(fixture.provider.requests.count, 0)
+    }
+
+    func testHybridAmbiguityThenLabelUpdatesContextButNeverOverridesManualCorrection() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(
+            configureSettings: {
+                $0.speakerAttributionMode = .experimentalHybrid
+                $0.hybridDiarizationConsent = true
+                $0.answerTriggerPolicy = .manual
+            },
+            speechRecognizer: recognizer
+        )
+        defer { fixture.close() }
+
+        fixture.store.startConversationListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        recognizer.emit("Расскажите о проекте", isFinal: true)
+        let message = try XCTUnwrap(fixture.store.visibleConversationMessages.first)
+        XCTAssertEqual(message.speakerRaw, ConversationSpeaker.partner.rawValue)
+        XCTAssertEqual(message.speakerSourceRaw, SpeakerAttributionSource.semantic.rawValue)
+        fixture.store.bindDiarizationLabel(.speakerA, to: .partner)
+
+        let ambiguousRevision = message.revision
+        XCTAssertTrue(fixture.store.applyHybridSpeaker(
+            label: .speakerA, confidence: 0.4, to: message, expectedRevision: ambiguousRevision
+        ))
+        XCTAssertEqual(message.speakerRaw, ConversationSpeaker.unknown.rawValue)
+
+        let acceptedRevision = message.revision
+        XCTAssertTrue(fixture.store.applyHybridSpeaker(
+            label: .speakerA, confidence: 0.9, to: message, expectedRevision: acceptedRevision
+        ))
+        XCTAssertEqual(message.speakerRaw, ConversationSpeaker.partner.rawValue)
+        XCTAssertEqual(fixture.store.contextTurns.first?.role, ConversationSpeaker.partner.title)
+        XCTAssertEqual(fixture.provider.requests.count, 0, "Late role correction must not retry AI")
+        XCTAssertFalse(fixture.store.applyHybridSpeaker(
+            label: .speakerA, confidence: 0.95, to: message, expectedRevision: acceptedRevision
+        ), "A stale chunk must not rewrite a newer message revision")
+
+        fixture.store.setSpeaker(.me, for: message)
+        XCTAssertTrue(message.speakerManuallyLocked)
+        XCTAssertFalse(fixture.store.applyHybridSpeaker(
+            label: .speakerA, confidence: 0.99, to: message, expectedRevision: message.revision
+        ))
+        XCTAssertEqual(message.speakerRaw, ConversationSpeaker.me.rawValue)
+    }
+
+    func testDiarizationAudioRequiresConsentAndIsClearedWhenConversationStops() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(
+            configureSettings: { $0.speakerAttributionMode = .experimentalHybrid },
+            speechRecognizer: recognizer
+        )
+        defer { fixture.close() }
+
+        fixture.store.startConversationListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        fixture.store.bufferDiarizationAudio(Data([1, 2, 3]))
+        XCTAssertEqual(fixture.store.diarizationBufferedByteCount, 0)
+
+        fixture.settings.hybridDiarizationConsent = true
+        fixture.store.bufferDiarizationAudio(Data([1, 2, 3]))
+        XCTAssertEqual(fixture.store.diarizationBufferedByteCount, 3)
+        fixture.store.stopConversationListening()
+        XCTAssertEqual(fixture.store.diarizationBufferedByteCount, 0)
+    }
+
     func testManualSpeechSavesTranscriptButSendsOnlyAfterExplicitTap() async throws {
         let recognizer = ControlledSpeechRecognizer()
         let fixture = try SessionFixture(

@@ -123,7 +123,7 @@ struct SettingsView: View {
                         SpeakerDetectionInfoView()
                     } label: {
                         LabeledContent {
-                            Text("Быстрое")
+                            Text(settings.speakerAttributionMode.title)
                                 .foregroundStyle(.secondary)
                         } label: {
                             Label("Различение голосов", systemImage: "person.2.wave.2")
@@ -1162,31 +1162,69 @@ private struct CameraControlsSettingsView: View {
 }
 
 private struct SpeakerDetectionInfoView: View {
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var store: SessionStore
+
     var body: some View {
         List {
             Section {
-                Label("Мгновенная расшифровка Apple Speech", systemImage: "bolt.fill")
-                Label("Предположение роли по смыслу", systemImage: "text.bubble")
-                Label("Исправление стрелкой одним нажатием", systemImage: "arrow.left.arrow.right")
+                Picker("Режим", selection: $settings.speakerAttributionMode) {
+                    ForEach(SpeakerAttributionMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
             } header: {
-                Text("Сейчас")
+                Text("Как назначать роли")
             } footer: {
-                Text("Этот режим самый быстрый и не отправляет аудио внешнему сервису, но не узнаёт человека по голосу.")
+                Text("Быстрый режим предполагает автора по смыслу. Ручной применяет выбранную вами роль. Ни один из них не отправляет аудио внешнему сервису.")
+            }
+
+            if settings.speakerAttributionMode == .manual {
+                Section {
+                    Picker("Сейчас говорит", selection: $settings.manualSpeakerRole) {
+                        ForEach(ManualSpeakerRole.allCases) { role in
+                            Text(role.title).tag(role)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Ручной режим")
+                } footer: {
+                    Text("Роль можно быстро менять и на экране Диалога. Ручная метка имеет приоритет над поздней автоматикой.")
+                }
+            }
+
+            if settings.speakerAttributionMode == .experimentalHybrid {
+                Section {
+                    Toggle("Разрешить обработку коротких аудиофрагментов", isOn: $settings.hybridDiarizationConsent)
+                    Label("Сетевой сервис не подключён", systemImage: "network.slash")
+                        .foregroundStyle(.orange)
+                    Text("Даже после согласия эта сборка не отправляет аудио. Она только подготавливает ограниченный буфер в памяти и безопасные правила Speaker A/B для будущего измеренного адаптера.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Экспериментальный гибрид")
+                } footer: {
+                    Text("Диаризация разделяет голоса на A/B, но не доказывает личность владельца. Метка может меняться между фрагментами; при сомнении QuickCue показывает «Не определён».")
+                }
             }
 
             Section {
-                Label("Yandex SpeechKit умеет размечать до двух говорящих", systemImage: "person.2.fill")
-                Label("OpenAI Transcribe Diarize разделяет аудио по спикерам", systemImage: "waveform.badge.magnifyingglass")
-                Text("Облачная диаризация требует отправки аудио, отдельного тарифа и добавляет задержку. Её разумно подключить вторым проходом: быстрый текст показывать сразу, а роли уточнять через несколько секунд.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Label("Исправление стрелкой одним нажатием", systemImage: "arrow.left.arrow.right")
+                Label("Аудио не сохраняется в файл", systemImage: "externaldrive.badge.xmark")
+                Label("Voiceprint не создаётся", systemImage: "waveform")
             } header: {
-                Text("Точное облачное различение")
-            } footer: {
-                Text("В этой сборке облачная отправка аудио ещё не включена.")
+                Text("Приватность")
             }
         }
         .navigationTitle("Голоса")
+        .onChange(of: settings.hybridDiarizationConsent) { _, enabled in
+            if !enabled { store.clearDiarizationAudio() }
+        }
+        .onChange(of: settings.speakerAttributionMode) { _, mode in
+            if mode != .experimentalHybrid { store.clearDiarizationAudio() }
+        }
     }
 }
 

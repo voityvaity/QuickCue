@@ -316,6 +316,52 @@ final class MigrationTests: XCTestCase {
         }
     }
 
+    func testVersionedV6StoreMigratesToV7AndKeepsSpeakerMetadataOptional() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+        var messageID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV6.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            let session = QuickCueSchemaV6.SessionRecord(id: sessionID, title: "V6", provider: .mock)
+            let message = QuickCueSchemaV6.ConversationMessageRecord(
+                sessionID: sessionID, speaker: .partner, kind: .speech, text: "Старое сообщение"
+            )
+            messageID = message.id
+            context.insert(session)
+            context.insert(message)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(container)
+            let message = try XCTUnwrap(context.fetch(FetchDescriptor<ConversationMessageRecord>()).first)
+            XCTAssertEqual(message.id, messageID)
+            XCTAssertNil(message.speakerSourceRaw)
+            XCTAssertNil(message.speakerConfidence)
+            XCTAssertFalse(message.speakerManuallyLocked)
+            XCTAssertNil(message.diarizationLabelRaw)
+            message.speakerSourceRaw = SpeakerAttributionSource.manual.rawValue
+            message.speakerManuallyLocked = true
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let message = try ModelContext(reopened).fetch(FetchDescriptor<ConversationMessageRecord>()).first
+            XCTAssertEqual(message?.speakerSourceRaw, SpeakerAttributionSource.manual.rawValue)
+            XCTAssertTrue(message?.speakerManuallyLocked == true)
+        }
+    }
+
     func testRecoveryPreservesCorruptStoreAndAllowsRetryWithoutReset() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -299,6 +299,25 @@ final class AppSettingsTests: XCTestCase {
         settings.setModelName(model, for: .deepSeek)
         XCTAssertEqual(settings.modelSelectionPolicy(for: .builtIn(.deepSeek)), .explicit(model))
     }
+
+    func testSpeakerModeConsentAndManualRolePersistWithoutEnablingHybridByDefault() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let fresh = AppSettings(defaults: defaults)
+        XCTAssertEqual(fresh.speakerAttributionMode, .quick)
+        XCTAssertEqual(fresh.manualSpeakerRole, .me)
+        XCTAssertFalse(fresh.hybridDiarizationConsent)
+
+        fresh.speakerAttributionMode = .manual
+        fresh.manualSpeakerRole = .partner
+        fresh.hybridDiarizationConsent = true
+        let reopened = AppSettings(defaults: defaults)
+        XCTAssertEqual(reopened.speakerAttributionMode, .manual)
+        XCTAssertEqual(reopened.manualSpeakerRole, .partner)
+        XCTAssertTrue(reopened.hybridDiarizationConsent)
+    }
 }
 
 private final class MutableFixtureSecrets: SecretStore, @unchecked Sendable {

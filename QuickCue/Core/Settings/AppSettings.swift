@@ -36,6 +36,9 @@ final class AppSettings: ObservableObject {
         static let bleRemoteEnabled = "settings.bleRemoteEnabled"
         static let bleRemoteServiceUUID = "settings.bleRemoteServiceUUID"
         static let bleRemoteCharacteristicUUID = "settings.bleRemoteCharacteristicUUID"
+        static let speakerAttributionMode = "settings.speakerAttributionMode"
+        static let manualSpeakerRole = "settings.manualSpeakerRole"
+        static let hybridDiarizationConsent = "settings.hybridDiarizationConsent"
     }
 
     private let defaults: UserDefaults
@@ -99,6 +102,15 @@ final class AppSettings: ObservableObject {
     }
     @Published var bleRemoteCharacteristicUUID: String {
         didSet { defaults.set(bleRemoteCharacteristicUUID, forKey: Key.bleRemoteCharacteristicUUID) }
+    }
+    @Published var speakerAttributionMode: SpeakerAttributionMode {
+        didSet { defaults.set(speakerAttributionMode.rawValue, forKey: Key.speakerAttributionMode) }
+    }
+    @Published var manualSpeakerRole: ManualSpeakerRole {
+        didSet { defaults.set(manualSpeakerRole.rawValue, forKey: Key.manualSpeakerRole) }
+    }
+    @Published var hybridDiarizationConsent: Bool {
+        didSet { defaults.set(hybridDiarizationConsent, forKey: Key.hybridDiarizationConsent) }
     }
     @Published private(set) var connectionReports: [String: ProviderConnectionReport] {
         didSet { persistConnectionReports() }
@@ -179,6 +191,13 @@ final class AppSettings: ObservableObject {
         bleRemoteEnabled = (defaults.object(forKey: Key.bleRemoteEnabled) as? Bool) ?? false
         bleRemoteServiceUUID = defaults.string(forKey: Key.bleRemoteServiceUUID) ?? ""
         bleRemoteCharacteristicUUID = defaults.string(forKey: Key.bleRemoteCharacteristicUUID) ?? ""
+        speakerAttributionMode = SpeakerAttributionMode(
+            rawValue: defaults.string(forKey: Key.speakerAttributionMode) ?? ""
+        ) ?? .quick
+        manualSpeakerRole = ManualSpeakerRole(
+            rawValue: defaults.string(forKey: Key.manualSpeakerRole) ?? ""
+        ) ?? .me
+        hybridDiarizationConsent = (defaults.object(forKey: Key.hybridDiarizationConsent) as? Bool) ?? false
         connectionReports = decodedConnectionReports
         customProviders = decodedCustomProviders
         self.corruptProviderProfileCount = corruptProviderProfileCount

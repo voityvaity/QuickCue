@@ -29,7 +29,18 @@ final class SessionStore: ObservableObject {
     @Published private(set) var retainedPhotoCount = 0
     @Published var alertMessage: String?
 
-    let speakerAttributionExplanation: String
+    var speakerAttributionExplanation: String {
+        switch settings.speakerAttributionMode {
+        case .quick:
+            "QuickCue предполагает роль по смыслу фразы. Это быстро, но не является распознаванием голоса; стрелка закрепляет вашу ручную правку."
+        case .manual:
+            "Перед речью выберите, кто сейчас говорит. Такая метка считается ручной и не заменяется поздней автоматикой."
+        case .experimentalHybrid:
+            settings.hybridDiarizationConsent
+                ? "Экспериментальный режим готов к меткам Speaker A/B, но сетевой сервис диаризации в этой сборке не подключён: аудио никуда не отправляется."
+                : "Экспериментальный режим не работает без отдельного согласия. Аудио никуда не отправляется."
+        }
+    }
 
     private enum RecognitionMode: Equatable {
         case live
@@ -72,6 +83,8 @@ final class SessionStore: ObservableObject {
     private var retainedPhoto: RetainedPhoto?
     private var speechEndpointRequestedAt: Date?
     private var speechEndpointDelayMilliseconds: Int?
+    private var diarizationMapping = SpeakerLabelMapping()
+    private var diarizationBuffer = EphemeralDiarizationBuffer()
 
     private struct RetainedPhoto {
         let sessionID: UUID
@@ -92,7 +105,6 @@ final class SessionStore: ObservableObject {
         self.modelContext = modelContext
         self.settings = settings
         self.speakerAttributor = speakerAttributor
-        self.speakerAttributionExplanation = speakerAttributor.explanation
         self.ledger = UsageLedger(modelContext: modelContext)
         self.providerFactory = providerFactory
         self.speechRecognizer = speechRecognizer ?? SpeechRecognizer()
@@ -171,6 +183,7 @@ final class SessionStore: ObservableObject {
         isForeground = false
         stopAllListening()
         cancelActiveRequests()
+        clearDiarizationAudio()
     }
 
     func handleSceneBecameActive() { isForeground = true }
@@ -262,6 +275,8 @@ final class SessionStore: ObservableObject {
         activeContextTitle = nil
         activeContextWasTruncated = false
         clearRetainedPhoto()
+        clearDiarizationAudio()
+        diarizationMapping.clear()
     }
 
     /// Context changes form an explicit session boundary. Stored snapshots remain unchanged.
@@ -435,10 +450,15 @@ final class SessionStore: ObservableObject {
     }
 
     func setSpeaker(_ speaker: ConversationSpeaker, for message: ConversationMessageRecord) {
-        guard speaker != .assistant, message.kindRaw == ConversationMessageKind.speech.rawValue,
+        guard speaker == .me || speaker == .partner,
+              message.kindRaw == ConversationMessageKind.speech.rawValue,
               message.speakerRaw != ConversationSpeaker.assistant.rawValue else { return }
         guard message.speakerRaw != speaker.rawValue else { return }
         message.speakerRaw = speaker.rawValue
+        message.speakerSourceRaw = SpeakerAttributionSource.manual.rawValue
+        message.speakerConfidence = nil
+        message.speakerManuallyLocked = true
+        message.diarizationLabelRaw = nil
         message.revision += 1
         if let index = turns.firstIndex(where: { $0.id == message.id }) {
             turns[index].turn = ConversationTurn(role: speaker.title, text: message.text)
@@ -446,6 +466,62 @@ final class SessionStore: ObservableObject {
         invalidateAnswers(sourceMessageID: message.id)
         try? modelContext.save()
     }
+
+    func bindDiarizationLabel(_ label: DiarizationSpeakerLabel, to speaker: ConversationSpeaker) {
+        guard currentSession != nil, speaker == .me || speaker == .partner else { return }
+        diarizationMapping.bind(label, to: speaker)
+    }
+
+    @discardableResult
+    func applyHybridSpeaker(
+        label: DiarizationSpeakerLabel,
+        confidence: Double,
+        to message: ConversationMessageRecord,
+        expectedRevision: Int
+    ) -> Bool {
+        guard settings.speakerAttributionMode == .experimentalHybrid,
+              settings.hybridDiarizationConsent,
+              let session = currentSession,
+              session.id == message.sessionID,
+              message.kindRaw == ConversationMessageKind.speech.rawValue,
+              message.revision == expectedRevision,
+              message.speakerRaw != ConversationSpeaker.assistant.rawValue,
+              let speaker = HybridSpeakerAssignment.resolve(
+                label: label,
+                confidence: confidence,
+                mapping: diarizationMapping,
+                manuallyLocked: message.speakerManuallyLocked
+              ) else { return false }
+
+        message.speakerRaw = speaker.rawValue
+        message.speakerSourceRaw = SpeakerAttributionSource.hybrid.rawValue
+        message.speakerConfidence = confidence
+        message.diarizationLabelRaw = label.rawValue
+        message.revision += 1
+        if let index = turns.firstIndex(where: { $0.id == message.id }) {
+            turns[index].turn = ConversationTurn(role: speaker.title, text: message.text)
+        }
+        // A late label only updates future context. It must not silently retry AI.
+        conversationUpdateRevision += 1
+        try? modelContext.save()
+        return true
+    }
+
+    /// Reserved for a future measured diarization adapter. No caller currently
+    /// uploads these bytes, and bytes are accepted only during an opted-in dialog.
+    func bufferDiarizationAudio(_ data: Data) {
+        guard isForeground,
+              recognitionMode == .conversation,
+              settings.speakerAttributionMode == .experimentalHybrid,
+              settings.hybridDiarizationConsent else { return }
+        diarizationBuffer.append(data)
+    }
+
+    func clearDiarizationAudio() {
+        diarizationBuffer.clear()
+    }
+
+    var diarizationBufferedByteCount: Int { diarizationBuffer.count }
 
     func reviseQuestion(_ value: String, for answer: AnswerRecord, answerAgain: Bool) {
         let text = detector.detect(value).normalizedText
@@ -561,6 +637,9 @@ final class SessionStore: ObservableObject {
         if recognitionMode == mode, listeningPhase != .idle { return }
         if recognitionMode != nil { stopCurrentRecognition() }
         if currentSession == nil { beginSession() }
+        if mode == .conversation, settings.speakerAttributionMode != .experimentalHybrid {
+            clearDiarizationAudio()
+        }
         recognitionMode = mode
         let generation = UUID()
         recognitionGeneration = generation
@@ -589,6 +668,7 @@ final class SessionStore: ObservableObject {
 
     private func stopCurrentRecognition() {
         guard recognitionMode != nil || listeningPhase != .idle else { return }
+        let wasConversation = recognitionMode == .conversation
         recognitionGeneration = UUID()
         startTask?.cancel()
         startTask = nil
@@ -604,6 +684,7 @@ final class SessionStore: ObservableObject {
 
         liveTranscript = ""
         conversationLiveTranscript = ""
+        if wasConversation { clearDiarizationAudio() }
     }
 
     private func beginSession() {
@@ -614,6 +695,8 @@ final class SessionStore: ObservableObject {
         captureContextSnapshot(for: session)
         currentSession = session
         scheduler.activate(sessionID: session.id)
+        diarizationMapping.clear()
+        clearDiarizationAudio()
         turns.removeAll()
         visibleAnswers.removeAll()
         visibleConversationMessages.removeAll()
@@ -743,10 +826,37 @@ final class SessionStore: ObservableObject {
         let previousSpeaker = visibleConversationMessages.reversed().compactMap {
             ConversationSpeaker(rawValue: $0.speakerRaw)
         }.first { $0 != .assistant }
-        let speaker: ConversationSpeaker = manual ? .me : speakerAttributor.classify(
-            detection: detection,
-            previousSpeaker: previousSpeaker
-        )
+        let attributionMode: SpeakerAttributionMode = if settings.speakerAttributionMode == .experimentalHybrid,
+                                                        !settings.hybridDiarizationConsent {
+            .quick
+        } else {
+            settings.speakerAttributionMode
+        }
+        let speaker: ConversationSpeaker
+        let source: SpeakerAttributionSource
+        let manuallyLocked: Bool
+        if manual {
+            speaker = .me
+            source = .manual
+            manuallyLocked = true
+        } else {
+            switch attributionMode {
+            case .quick:
+                speaker = speakerAttributor.classify(detection: detection, previousSpeaker: previousSpeaker)
+                source = .semantic
+                manuallyLocked = false
+            case .manual:
+                speaker = settings.manualSpeakerRole.speaker
+                source = .manual
+                manuallyLocked = true
+            case .experimentalHybrid:
+                // Keep the fast semantic result visible. A future measured A/B
+                // adapter may revise it, but ambiguity becomes `.unknown`.
+                speaker = speakerAttributor.classify(detection: detection, previousSpeaker: previousSpeaker)
+                source = .semantic
+                manuallyLocked = false
+            }
+        }
         let message = ConversationMessageRecord(
             sessionID: session.id,
             speaker: speaker,
@@ -776,6 +886,8 @@ final class SessionStore: ObservableObject {
             sourceMessageID: message.id,
             questionRevision: message.revision
         )
+        message.speakerSourceRaw = source.rawValue
+        message.speakerManuallyLocked = manuallyLocked
     }
 
     private func registerTranscriptIfNew(

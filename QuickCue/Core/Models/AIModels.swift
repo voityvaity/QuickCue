@@ -137,6 +137,31 @@ enum AnswerTriggerPolicy: String, CaseIterable, Codable, Identifiable, Sendable 
     }
 }
 
+enum SpeakerAttributionMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case quick
+    case manual
+    case experimentalHybrid
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .quick: "Быстрый"
+        case .manual: "Ручной"
+        case .experimentalHybrid: "Экспериментальный"
+        }
+    }
+}
+
+enum ManualSpeakerRole: String, CaseIterable, Codable, Identifiable, Sendable {
+    case me
+    case partner
+
+    var id: String { rawValue }
+    var speaker: ConversationSpeaker { self == .me ? .me : .partner }
+    var title: String { speaker.title }
+}
+
 struct ModelProfile: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var apiModelID: String

@@ -95,6 +95,12 @@ struct ConversationView: View {
             } message: {
                 Text(store.alertMessage ?? "")
             }
+            .onChange(of: settings.hybridDiarizationConsent) { _, enabled in
+                if !enabled { store.clearDiarizationAudio() }
+            }
+            .onChange(of: settings.speakerAttributionMode) { _, mode in
+                if mode != .experimentalHybrid { store.clearDiarizationAudio() }
+            }
         }
     }
 
@@ -169,6 +175,27 @@ struct ConversationView: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
+
+            if settings.speakerAttributionMode == .manual {
+                Picker("Сейчас говорит", selection: $settings.manualSpeakerRole) {
+                    ForEach(ManualSpeakerRole.allCases) { role in
+                        Text(role.title).tag(role)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .accessibilityHint("Выбранная роль применяется к следующим распознанным фразам")
+            } else if settings.speakerAttributionMode == .experimentalHybrid {
+                Label(
+                    settings.hybridDiarizationConsent
+                        ? "Эксперимент: сначала смысл, затем возможное уточнение A/B"
+                        : "Гибрид выключен без отдельного согласия",
+                    systemImage: "person.2.wave.2"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+            }
 
             HStack(spacing: 8) {
                 TextField("Написать вопрос AI", text: $manualText, axis: .vertical)
@@ -290,6 +317,10 @@ private struct ConversationMessageBubble: View {
                 bubbleContent
                 transferButton(to: .me, systemImage: "arrow.right")
                 Spacer(minLength: 12)
+            case .unknown:
+                transferButton(to: .partner, systemImage: "arrow.left")
+                bubbleContent
+                transferButton(to: .me, systemImage: "arrow.right")
             case .assistant:
                 bubbleContent
             }
@@ -299,6 +330,12 @@ private struct ConversationMessageBubble: View {
     private var bubbleContent: some View {
         VStack(alignment: .leading, spacing: 9) {
             speakerLabel
+
+            if kind == .speech, speaker != .assistant, let attributionCaption {
+                Text(attributionCaption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             if kind == .photo, let path = message.photoRelativePath {
                 LocalConversationPhoto(relativePath: path)
@@ -352,11 +389,29 @@ private struct ConversationMessageBubble: View {
         } else {
             Label(
                 speaker.title,
-                systemImage: speaker == .me ? "person.fill" : "person.wave.2.fill"
+                systemImage: speakerIcon
             )
             .font(.caption.weight(.semibold))
-            .foregroundStyle(speaker == .me ? .indigo : .secondary)
+            .foregroundStyle(speaker == .me ? .indigo : (speaker == .unknown ? .orange : .secondary))
         }
+    }
+
+    private var speakerIcon: String {
+        switch speaker {
+        case .me: "person.fill"
+        case .partner: "person.wave.2.fill"
+        case .unknown: "questionmark.circle.fill"
+        case .assistant: "sparkles"
+        }
+    }
+
+    private var attributionCaption: String? {
+        guard let raw = message.speakerSourceRaw,
+              let source = SpeakerAttributionSource(rawValue: raw) else { return nil }
+        if source == .hybrid, let confidence = message.speakerConfidence {
+            return "\(source.title) · \(confidence.formatted(.percent.precision(.fractionLength(0))))"
+        }
+        return source.title
     }
 
     private func transferButton(
@@ -387,6 +442,7 @@ private struct ConversationMessageBubble: View {
         switch speaker {
         case .me: Color.indigo.opacity(0.1)
         case .partner: Color(uiColor: .secondarySystemBackground)
+        case .unknown: Color.orange.opacity(0.09)
         case .assistant: Color.indigo.opacity(0.055)
         }
     }
