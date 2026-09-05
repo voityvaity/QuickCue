@@ -64,7 +64,7 @@ struct SpeechEvaluationSample: Codable, Equatable, Sendable {
     let confidence: Double
     let endpointDelayMilliseconds: Int?
     let finalizationMilliseconds: Int?
-    let duplicateEvents: Int
+    var duplicateEvents: Int
 }
 
 struct SpeechEvaluationReport: Codable, Identifiable, Equatable, Sendable {
@@ -162,6 +162,8 @@ final class SpeechBenchmarkRunner: ObservableObject {
     private var endpointRequestedAt: Date?
     private var endpointDelayMilliseconds: Int?
     private var generation = UUID()
+    private var lastCompletedText: String?
+    private var lastCompletedAt: Date?
 
     init(
         recognizer: (any SpeechRecognizing)? = nil,
@@ -216,6 +218,8 @@ final class SpeechBenchmarkRunner: ObservableObject {
         cancelCurrent()
         currentIndex = 0
         samples = []
+        lastCompletedText = nil
+        lastCompletedAt = nil
         errorMessage = nil
     }
 
@@ -225,7 +229,19 @@ final class SpeechBenchmarkRunner: ObservableObject {
     }
 
     private func receive(_ text: String, isFinal: Bool, confidence: Double) {
-        guard isRecording, let item = currentCase else { return }
+        guard isRecording, let item = currentCase else {
+            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if isFinal,
+               !normalized.isEmpty,
+               let lastCompletedText,
+               normalized == lastCompletedText,
+               let completedAt = lastCompletedAt,
+               Date.now.timeIntervalSince(completedAt) < 1.5,
+               !samples.isEmpty {
+                samples[samples.index(before: samples.endIndex)].duplicateEvents += 1
+            }
+            return
+        }
         recognizedText = text
         if let confirmed = assembler.receive(text, isFinal: isFinal) {
             endpointTask?.cancel()
@@ -244,6 +260,8 @@ final class SpeechBenchmarkRunner: ObservableObject {
                 finalizationMilliseconds: finalization,
                 duplicateEvents: 0
             ))
+            lastCompletedText = confirmed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            lastCompletedAt = .now
             stopRecognition()
             isRecording = false
             currentIndex += 1

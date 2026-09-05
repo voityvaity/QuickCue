@@ -39,6 +39,22 @@ final class SpeechEvaluationTests: XCTestCase {
         XCTAssertTrue(archive.load().isEmpty)
     }
 
+    func testLateDuplicateFinalIsCountedInsteadOfBecomingAnotherSample() {
+        let suite = "SpeechEvaluationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let recognizer = BenchmarkRecognizer()
+        let runner = SpeechBenchmarkRunner(recognizer: recognizer, defaults: defaults)
+
+        runner.startCurrent()
+        recognizer.emit("Что такое декоратор", isFinal: true)
+        recognizer.emit("Что такое декоратор", isFinal: true)
+
+        XCTAssertEqual(runner.samples.count, 1)
+        XCTAssertEqual(runner.samples.first?.duplicateEvents, 1)
+        XCTAssertEqual(runner.currentIndex, 1)
+    }
+
     private func report(id: UUID, samples: [SpeechEvaluationSample]) -> SpeechEvaluationReport {
         SpeechEvaluationReport(
             id: id, createdAt: .now, appVersion: "test", appBuild: "1", revision: "fixture",
@@ -60,5 +76,31 @@ final class SpeechEvaluationTests: XCTestCase {
             confidence: 1, endpointDelayMilliseconds: 500,
             finalizationMilliseconds: finalization, duplicateEvents: duplicates
         )
+    }
+}
+
+@MainActor
+private final class BenchmarkRecognizer: SpeechRecognizing {
+    private(set) var state: SpeechRecognitionState = .idle
+    var onStateChange: ((SpeechRecognitionState) -> Void)?
+    var onTranscript: ((String, Bool, Double) -> Void)?
+    var onUtteranceStarted: (() -> Void)?
+    var onFailure: ((Error) -> Void)?
+
+    func start() async throws {
+        state = .listening
+        onStateChange?(state)
+        onUtteranceStarted?()
+    }
+
+    func stop() {
+        state = .idle
+        onStateChange?(state)
+    }
+
+    func finishCurrentUtterance() {}
+
+    func emit(_ text: String, isFinal: Bool) {
+        onTranscript?(text, isFinal, 1)
     }
 }
