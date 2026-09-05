@@ -355,4 +355,3 @@ enum QuickCueSchemaV6: VersionedSchema {
         }
     }
 }
-

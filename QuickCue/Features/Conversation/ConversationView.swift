@@ -318,9 +318,9 @@ private struct ConversationMessageBubble: View {
                 transferButton(to: .me, systemImage: "arrow.right")
                 Spacer(minLength: 12)
             case .unknown:
-                transferButton(to: .partner, systemImage: "arrow.left")
+                Spacer(minLength: 12)
                 bubbleContent
-                transferButton(to: .me, systemImage: "arrow.right")
+                Spacer(minLength: 12)
             case .assistant:
                 bubbleContent
             }
@@ -335,6 +335,15 @@ private struct ConversationMessageBubble: View {
                 Text(attributionCaption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+
+            if kind == .speech, speaker == .unknown {
+                HStack {
+                    Button("Это я") { store.setSpeaker(.me, for: message) }
+                    Button("Собеседник") { store.setSpeaker(.partner, for: message) }
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
             }
 
             if kind == .photo, let path = message.photoRelativePath {
