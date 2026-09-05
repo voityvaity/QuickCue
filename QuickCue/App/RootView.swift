@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct RootView: View {
@@ -70,6 +71,12 @@ struct RootView: View {
                 store.stopAllListening()
             }
         }
+        .onAppear(perform: consumePendingCameraRequest)
+        .onReceive(NotificationCenter.default.publisher(
+            for: QuickCueNavigationRequestStore.cameraRequestNotification
+        )) { _ in
+            consumePendingCameraRequest()
+        }
     }
 
     private func requestTab(_ target: AppTab) {
@@ -88,6 +95,11 @@ struct RootView: View {
         if case .switched(_, shouldStop: true) = result {
             store.stopAllListening()
         }
+    }
+
+    private func consumePendingCameraRequest() {
+        guard QuickCueNavigationRequestStore.consumeCameraRequest() else { return }
+        requestTab(.camera)
     }
 }
 

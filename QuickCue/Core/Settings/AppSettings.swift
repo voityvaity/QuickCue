@@ -33,6 +33,9 @@ final class AppSettings: ObservableObject {
         static let providerProfilesRecovery = "settings.providerProfiles.recovery.v2"
         static let listeningNavigationPolicy = "settings.listeningNavigationPolicy"
         static let answerTriggerPolicy = "settings.answerTriggerPolicy"
+        static let bleRemoteEnabled = "settings.bleRemoteEnabled"
+        static let bleRemoteServiceUUID = "settings.bleRemoteServiceUUID"
+        static let bleRemoteCharacteristicUUID = "settings.bleRemoteCharacteristicUUID"
     }
 
     private let defaults: UserDefaults
@@ -87,6 +90,15 @@ final class AppSettings: ObservableObject {
     }
     @Published var answerTriggerPolicy: AnswerTriggerPolicy {
         didSet { defaults.set(answerTriggerPolicy.rawValue, forKey: Key.answerTriggerPolicy) }
+    }
+    @Published var bleRemoteEnabled: Bool {
+        didSet { defaults.set(bleRemoteEnabled, forKey: Key.bleRemoteEnabled) }
+    }
+    @Published var bleRemoteServiceUUID: String {
+        didSet { defaults.set(bleRemoteServiceUUID, forKey: Key.bleRemoteServiceUUID) }
+    }
+    @Published var bleRemoteCharacteristicUUID: String {
+        didSet { defaults.set(bleRemoteCharacteristicUUID, forKey: Key.bleRemoteCharacteristicUUID) }
     }
     @Published private(set) var connectionReports: [String: ProviderConnectionReport] {
         didSet { persistConnectionReports() }
@@ -164,6 +176,9 @@ final class AppSettings: ObservableObject {
         answerTriggerPolicy = AnswerTriggerPolicy(
             rawValue: defaults.string(forKey: Key.answerTriggerPolicy) ?? ""
         ) ?? .automatic
+        bleRemoteEnabled = (defaults.object(forKey: Key.bleRemoteEnabled) as? Bool) ?? false
+        bleRemoteServiceUUID = defaults.string(forKey: Key.bleRemoteServiceUUID) ?? ""
+        bleRemoteCharacteristicUUID = defaults.string(forKey: Key.bleRemoteCharacteristicUUID) ?? ""
         connectionReports = decodedConnectionReports
         customProviders = decodedCustomProviders
         self.corruptProviderProfileCount = corruptProviderProfileCount

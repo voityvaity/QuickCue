@@ -6,6 +6,9 @@ import Foundation
 final class CameraService: NSObject, ObservableObject {
     @Published private(set) var isConfigured = false
     @Published private(set) var authorizationDenied = false
+    @Published private(set) var isFlashAvailable = false
+    @Published private(set) var focusPoint: CGPoint?
+    @Published var flashMode: AVCaptureDevice.FlashMode = .off
     @Published var lastError: String?
 
     let session = AVCaptureSession()
@@ -50,6 +53,7 @@ final class CameraService: NSObject, ObservableObject {
             session.addInput(input)
             session.addOutput(output)
             self.device = device
+            isFlashAvailable = device.hasFlash
             session.commitConfiguration()
             isConfigured = true
             await startAndWait()
@@ -105,6 +109,9 @@ final class CameraService: NSObject, ObservableObject {
                 self.continuation = continuation
                 let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
                 settings.photoQualityPrioritization = .balanced
+                if self.isFlashAvailable {
+                    settings.flashMode = self.flashMode
+                }
                 captureID = settings.uniqueID
                 output.capturePhoto(with: settings, delegate: self)
                 captureTimeout = Task { [weak self] in
@@ -114,6 +121,25 @@ final class CameraService: NSObject, ObservableObject {
             }
         } onCancel: {
             Task { @MainActor [weak self] in self?.cancelCapture(token: token) }
+        }
+    }
+
+    func focus(at devicePoint: CGPoint) {
+        guard let device else { return }
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            if device.isFocusPointOfInterestSupported, device.isFocusModeSupported(.autoFocus) {
+                device.focusPointOfInterest = devicePoint
+                device.focusMode = .autoFocus
+            }
+            if device.isExposurePointOfInterestSupported, device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposurePointOfInterest = devicePoint
+                device.exposureMode = .continuousAutoExposure
+            }
+            focusPoint = devicePoint
+        } catch {
+            lastError = "Не удалось изменить фокус. Камера продолжает работать автоматически."
         }
     }
 
@@ -154,6 +180,7 @@ enum CameraError: LocalizedError {
     case configuration
     case captureInProgress
     case noData
+    case invalidImport
 
     var errorDescription: String? {
         switch self {
@@ -161,6 +188,7 @@ enum CameraError: LocalizedError {
         case .configuration: "Не удалось настроить камеру."
         case .captureInProgress: "Снимок уже выполняется."
         case .noData: "Камера не вернула фотографию."
+        case .invalidImport: "Не удалось открыть фотографию или файл больше 20 МБ. Выберите другое изображение."
         }
     }
 }

@@ -1,3 +1,5 @@
+import AVKit
+import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
@@ -5,7 +7,9 @@ import UIKit
 struct CameraModeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: SessionStore
+    @EnvironmentObject private var settings: AppSettings
     @StateObject private var camera = CameraService()
     @StateObject private var remote = BLERemoteCaptureController()
     @State private var isProcessing = false
@@ -21,10 +25,29 @@ struct CameraModeView: View {
     @State private var isVisible = false
     @State private var showFullAnswer = false
     @State private var completionCounter = 0
+    @State private var captureAcceptedCounter = 0
     @State private var previewRestartID = UUID()
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var didAutoCapture = false
+    @State private var hardwareCaptureGate = HardwareCaptureGate()
+    @State private var retainForSession = false
+
+    let autoCaptureOnReady: Bool
+    let includeInConversation: Bool
+    let showsDismissButton: Bool
 
     private let photoStore = PhotoStore()
     private let textRecognizer = TextRecognizer()
+
+    init(
+        autoCaptureOnReady: Bool = false,
+        includeInConversation: Bool = false,
+        showsDismissButton: Bool = false
+    ) {
+        self.autoCaptureOnReady = autoCaptureOnReady
+        self.includeInConversation = includeInConversation
+        self.showsDismissButton = showsDismissButton
+    }
 
     var body: some View {
         NavigationStack {
@@ -41,6 +64,21 @@ struct CameraModeView: View {
                         Button("К камере") { resetPhoto() }
                     }
                 }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if previewData == nil, camera.isFlashAvailable {
+                        Menu {
+                            Button("Вспышка выключена") { camera.flashMode = .off }
+                            Button("Вспышка автоматически") { camera.flashMode = .auto }
+                            Button("Вспышка включена") { camera.flashMode = .on }
+                        } label: {
+                            Image(systemName: flashSystemImage)
+                        }
+                        .accessibilityLabel("Режим вспышки")
+                    }
+                    if showsDismissButton {
+                        Button("Закрыть", systemImage: "xmark") { dismiss() }
+                    }
+                }
             }
             .onAppear { isVisible = true }
             .onDisappear {
@@ -54,6 +92,11 @@ struct CameraModeView: View {
                 if let photoSessionID, photoSessionID != sessionID { resetPhoto() }
             }
             .sensoryFeedback(.success, trigger: completionCounter)
+            .sensoryFeedback(.impact(weight: .medium), trigger: captureAcceptedCounter)
+            .onChange(of: selectedPhoto) { _, item in
+                guard let item else { return }
+                importPhoto(item)
+            }
             .navigationDestination(isPresented: $showFullAnswer) {
                 if let resultAnswer {
                     ScrollView { AnswerCardView(answer: resultAnswer).padding() }
@@ -74,7 +117,9 @@ struct CameraModeView: View {
 
     private var viewfinder: some View {
         ZStack(alignment: .bottom) {
-            CameraPreview(session: camera.session)
+            CameraPreview(session: camera.session) { point in
+                camera.focus(at: point)
+            }
                 .ignoresSafeArea(edges: .top)
             if camera.authorizationDenied {
                 ContentUnavailableView(
@@ -94,22 +139,41 @@ struct CameraModeView: View {
                     }
                         .buttonStyle(.bordered)
                 } else {
-                    Text("Расположите задачу в кадре. После снимка можно проверить текст.")
+                    Text(camera.isConfigured
+                         ? "Коснитесь экрана для фокуса. После снимка можно проверить текст."
+                         : "Подготовка камеры…")
                         .font(.caption)
                         .multilineTextAlignment(.center)
                         .padding(10)
                         .background(.ultraThinMaterial, in: Capsule())
                 }
-                Button { takePhoto(source: .screenButton) } label: {
-                    ZStack {
-                        Circle().fill(.white).frame(width: 82, height: 82)
-                        Circle().stroke(.black.opacity(0.25), lineWidth: 3).frame(width: 70, height: 70)
-                        if isProcessing { ProgressView().tint(.black) }
-                        else { Image(systemName: "camera.fill").font(.title).foregroundStyle(.black) }
+                HStack(spacing: 28) {
+                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        Image(systemName: "photo.on.rectangle")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 58, height: 58)
+                            .background(.black.opacity(0.45), in: Circle())
                     }
+                    .disabled(isProcessing)
+                    .accessibilityLabel("Импортировать фотографию")
+
+                    Button { takePhoto(source: .screenButton) } label: {
+                        ZStack {
+                            Circle().fill(.white).frame(width: 82, height: 82)
+                            Circle().stroke(.black.opacity(0.25), lineWidth: 3).frame(width: 70, height: 70)
+                            if isProcessing { ProgressView().tint(.black) }
+                            else { Image(systemName: "camera.fill").font(.title).foregroundStyle(.black) }
+                        }
+                    }
+                    .disabled(isProcessing || !camera.isConfigured || camera.authorizationDenied)
+                    .accessibilityLabel("Сфотографировать задачу")
+
+                    Image(systemName: camera.focusPoint == nil ? "viewfinder" : "viewfinder.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 58, height: 58)
                 }
-                .disabled(isProcessing || !camera.isConfigured || camera.authorizationDenied)
-                .accessibilityLabel("Сфотографировать задачу")
             }
             .padding()
         }
@@ -118,9 +182,23 @@ struct CameraModeView: View {
             await camera.configure()
             guard !Task.isCancelled, scenePhase == .active else { return }
             remote.onCapture = { source in takePhoto(source: source) }
-            remote.start()
+            if settings.bleRemoteEnabled {
+                remote.configure(
+                    serviceUUID: settings.bleRemoteServiceUUID,
+                    triggerCharacteristicUUID: settings.bleRemoteCharacteristicUUID
+                )
+                remote.start()
+            }
+            if autoCaptureOnReady, !didAutoCapture {
+                didAutoCapture = true
+                takePhoto(source: .screenButton)
+            }
         }
         .onDisappear { camera.stop(); remote.stop() }
+        .onCameraCaptureEvent(
+            isEnabled: camera.isConfigured && !isProcessing && previewData == nil,
+            action: handleCameraCaptureEvent
+        )
     }
 
     private var reviewScreen: some View {
@@ -148,6 +226,19 @@ struct CameraModeView: View {
                 }
 
                 PhotoTransferDisclosure()
+
+                Toggle("Использовать это фото в следующих вопросах сессии", isOn: $retainForSession)
+                    .disabled(resultAnswer != nil || isSending || !selectedProviderSupportsImages)
+                if !selectedProviderSupportsImages {
+                    Text("Выбранная модель получает только OCR-текст, поэтому повторная отправка изображения недоступна.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if retainForSession {
+                    Text("Фото будет повторно отправляться только выбранному сейчас AI до конца сессии или пока вы не отключите его.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
 
                 if isSending {
                     HStack { ProgressView(); Text("Готовлю ответ по снимку…") }
@@ -202,6 +293,7 @@ struct CameraModeView: View {
     private func takePhoto(source: CaptureTriggerSource) {
         guard !isProcessing, !isSending, previewData == nil, scenePhase == .active,
               let sessionID = store.preparePhotoSession() else { return }
+        captureAcceptedCounter += 1
         photoSessionID = sessionID
         isProcessing = true
         let operation = UUID()
@@ -251,7 +343,9 @@ struct CameraModeView: View {
             try modelContext.save()
             let answer = await store.answerPhoto(
                 jpeg: upload, recognizedText: text, photoRelativePath: photo.relativePath,
-                expectedSessionID: sessionID
+                includeInConversation: includeInConversation,
+                expectedSessionID: sessionID,
+                retainForSession: retainForSession
             )
             try checkActive(operation: operation, sessionID: sessionID)
             if let answer {
@@ -293,5 +387,63 @@ struct CameraModeView: View {
         resultAnswer = nil
         photoSessionID = nil
         showFullAnswer = false
+        retainForSession = false
+        selectedPhoto = nil
+    }
+
+    private var flashSystemImage: String {
+        switch camera.flashMode {
+        case .off: "bolt.slash.fill"
+        case .auto: "bolt.badge.a.fill"
+        case .on: "bolt.fill"
+        @unknown default: "bolt.slash.fill"
+        }
+    }
+
+    private var selectedProviderSupportsImages: Bool {
+        ProviderRegistry(settings: settings).provider(settings.primaryProvider).capabilities.supportsImages
+    }
+
+    private func handleCameraCaptureEvent(_ event: AVCaptureEvent) {
+        let phase: HardwareCapturePhase = switch event.phase {
+        case .began: .began
+        case .ended: .ended
+        case .cancelled: .cancelled
+        @unknown default: .cancelled
+        }
+        if hardwareCaptureGate.shouldCapture(phase) {
+            takePhoto(source: .systemCameraButton)
+        }
+    }
+
+    private func importPhoto(_ item: PhotosPickerItem) {
+        guard !isProcessing, !isSending, previewData == nil, scenePhase == .active,
+              let sessionID = store.preparePhotoSession() else { return }
+        photoSessionID = sessionID
+        isProcessing = true
+        let operation = UUID()
+        operationID = operation
+        operationTask = Task {
+            defer { selectedPhoto = nil }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self),
+                      data.count <= PhotoInputPolicy.maximumImportedBytes,
+                      let image = UIImage(data: data),
+                      let jpeg = image.jpegData(compressionQuality: 0.94) else {
+                    throw CameraError.invalidImport
+                }
+                try checkActive(operation: operation, sessionID: sessionID)
+                let text = try await textRecognizer.recognize(jpeg: jpeg)
+                try checkActive(operation: operation, sessionID: sessionID)
+                previewData = jpeg
+                recognizedText = text
+                completionCounter += 1
+            } catch is CancellationError {
+                // Import cancellation never creates or sends a photo.
+            } catch {
+                if operationID == operation { errorMessage = error.localizedDescription }
+            }
+            if operationID == operation { isProcessing = false }
+        }
     }
 }

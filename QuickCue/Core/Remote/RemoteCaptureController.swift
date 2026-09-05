@@ -4,8 +4,9 @@ import Foundation
 
 enum CaptureTriggerSource: String, Sendable {
     case screenButton
+    case systemCameraButton
     case customBLE
-    case volumeObservationExperiment
+    case photoLibrary
 }
 
 @MainActor
@@ -15,9 +16,8 @@ protocol CaptureTriggering: AnyObject {
     func stop()
 }
 
-/// Extension point for a custom BLE button with a documented service and characteristic.
-/// A generic selfie remote usually emulates volume keys; iOS has no reliable public API
-/// for treating those keys as an application command, so this MVP intentionally avoids hacks.
+/// Adapter for a documented BLE GATT button. System camera-button events are handled
+/// separately by SwiftUI while the viewfinder is active.
 @MainActor
 final class BLERemoteCaptureController: NSObject, ObservableObject, CaptureTriggering {
     @Published private(set) var status = "Не настроено"
@@ -25,8 +25,9 @@ final class BLERemoteCaptureController: NSObject, ObservableObject, CaptureTrigg
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
-    private let serviceUUID: CBUUID?
-    private let triggerCharacteristicUUID: CBUUID?
+    private var serviceUUID: CBUUID?
+    private var triggerCharacteristicUUID: CBUUID?
+    private var triggerDebouncer = CaptureTriggerDebouncer()
 
     init(serviceUUID: String? = nil, triggerCharacteristicUUID: String? = nil) {
         self.serviceUUID = serviceUUID.map { CBUUID(string: $0) }
@@ -34,7 +35,18 @@ final class BLERemoteCaptureController: NSObject, ObservableObject, CaptureTrigg
         super.init()
     }
 
+    func configure(serviceUUID: String, triggerCharacteristicUUID: String) {
+        let service = serviceUUID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let characteristic = triggerCharacteristicUUID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.serviceUUID = service.isEmpty ? nil : CBUUID(string: service)
+        self.triggerCharacteristicUUID = characteristic.isEmpty ? nil : CBUUID(string: characteristic)
+        status = self.serviceUUID == nil || self.triggerCharacteristicUUID == nil
+            ? "Нужны UUID совместимой BLE-кнопки"
+            : "Готово к подключению"
+    }
+
     func start() {
+        guard central == nil else { return }
         guard serviceUUID != nil, triggerCharacteristicUUID != nil else {
             status = "Нужны UUID совместимой BLE-кнопки"
             return
@@ -108,6 +120,9 @@ extension BLERemoteCaptureController: CBCentralManagerDelegate, CBPeripheralDele
         error: Error?
     ) {
         guard error == nil else { return }
-        Task { @MainActor in onCapture?(.customBLE) }
+        Task { @MainActor in
+            guard triggerDebouncer.accept() else { return }
+            onCapture?(.customBLE)
+        }
     }
 }

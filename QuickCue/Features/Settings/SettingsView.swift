@@ -129,6 +129,12 @@ struct SettingsView: View {
                             Label("Различение голосов", systemImage: "person.2.wave.2")
                         }
                     }
+
+                    NavigationLink {
+                        CameraControlsSettingsView()
+                    } label: {
+                        Label("Камера и физические кнопки", systemImage: "camera.badge.ellipsis")
+                    }
                 }
 
                 Section {
@@ -1103,6 +1109,49 @@ private struct LimitsSettingsView: View {
             }
         }
         .navigationTitle("Лимиты")
+    }
+}
+
+private struct CameraControlsSettingsView: View {
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Section {
+                Label("Работает только при открытом видоискателе", systemImage: "camera.viewfinder")
+                Label("Один полный клик создаёт один снимок", systemImage: "hand.tap")
+            } header: {
+                Text("Кнопки камеры iPhone")
+            } footer: {
+                Text("QuickCue использует публичное системное событие камеры. Доступность конкретной кнопки проверяется на вашем iPhone; при закрытой камере она не перехватывается.")
+            }
+
+            Section {
+                Toggle("Совместимая BLE GATT-кнопка", isOn: $settings.bleRemoteEnabled)
+                TextField("Service UUID", text: $settings.bleRemoteServiceUUID)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .disabled(!settings.bleRemoteEnabled)
+                TextField("Characteristic UUID", text: $settings.bleRemoteCharacteristicUUID)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .disabled(!settings.bleRemoteEnabled)
+            } header: {
+                Text("Отдельный Bluetooth-пульт")
+            } footer: {
+                Text("Нужны UUID из документации именно вашего GATT-пульта. Обычный selfie remote может работать как системная кнопка громкости и не обязан предоставлять эти UUID. QuickCue не сканирует Bluetooth, пока выключен этот переключатель или закрыта камера.")
+            }
+
+            Section {
+                Label("В Командах найдите «Открыть камеру QuickCue»", systemImage: "square.grid.3x3.fill")
+                Text("Назначьте эту команду на Action Button вручную. Она только открывает камеру: скрытой съёмки и автоматической отправки нет.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Action Button")
+            }
+        }
+        .navigationTitle("Управление камерой")
     }
 }
 

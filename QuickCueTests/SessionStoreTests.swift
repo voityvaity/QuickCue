@@ -371,6 +371,52 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertNotNil(fixture.store.alertMessage)
     }
 
+    func testRetainedPhotoIsExplicitSessionAndProviderBound() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        let sessionID = try XCTUnwrap(fixture.store.preparePhotoSession())
+        let photo = Task {
+            await fixture.store.answerPhoto(
+                jpeg: Data([7, 8, 9]),
+                recognizedText: "Задача",
+                expectedSessionID: sessionID,
+                retainForSession: true
+            )
+        }
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.first?.id), text: "Фото")
+        _ = await photo.value
+        XCTAssertEqual(fixture.store.retainedPhotoCount, 1)
+
+        fixture.store.submitManualQuestion("Уточнение?")
+        try await waitUntil { fixture.provider.requests.count == 2 }
+        XCTAssertEqual(fixture.provider.requests.last?.imageJPEG, Data([7, 8, 9]))
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.last?.id), text: "Ответ")
+        try await waitUntil { fixture.store.activeRequestCount == 0 }
+
+        fixture.settings.primaryProvider = .builtIn(.deepSeek)
+        fixture.store.submitManualQuestion("После смены получателя?")
+        try await waitUntil { fixture.provider.requests.count == 3 }
+        XCTAssertNil(fixture.provider.requests.last?.imageJPEG)
+    }
+
+    func testRetainedPhotoClearsAtSessionEnd() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        let sessionID = try XCTUnwrap(fixture.store.preparePhotoSession())
+        let photo = Task {
+            await fixture.store.answerPhoto(
+                jpeg: Data([1]), recognizedText: "Фото", expectedSessionID: sessionID,
+                retainForSession: true
+            )
+        }
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.first?.id), text: "Ответ")
+        _ = await photo.value
+        fixture.store.endSession()
+        XCTAssertEqual(fixture.store.retainedPhotoCount, 0)
+    }
+
     func testDeletedSessionDoesNotReceiveLateUsage() async throws {
         let fixture = try SessionFixture()
         defer { fixture.close() }

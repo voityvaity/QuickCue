@@ -154,6 +154,7 @@ struct LiveView: View {
             }
 
             PhotoTransferDisclosure(compact: true)
+            RetainedPhotoBadge()
 
             Picker("Когда отвечать", selection: $settings.answerTriggerPolicy) {
                 ForEach(AnswerTriggerPolicy.allCases) { policy in

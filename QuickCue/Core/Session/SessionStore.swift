@@ -26,6 +26,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var conversationUpdateRevision = 0
     @Published private(set) var activeContextTitle: String?
     @Published private(set) var activeContextWasTruncated = false
+    @Published private(set) var retainedPhotoCount = 0
     @Published var alertMessage: String?
 
     let speakerAttributionExplanation: String
@@ -62,6 +63,13 @@ final class SessionStore: ObservableObject {
     private var turns: [ContextEntry] = []
     private var activeContextText = ""
     private var activeContextSnapshotID: UUID?
+    private var retainedPhoto: RetainedPhoto?
+
+    private struct RetainedPhoto {
+        let sessionID: UUID
+        let jpeg: Data
+        let providerSelection: ProviderSelection
+    }
 
     /// Internal for deterministic context tests; never logged or exported automatically.
     var contextTurns: [ConversationTurn] { turns.map(\.turn) }
@@ -245,6 +253,7 @@ final class SessionStore: ObservableObject {
         activeContextSnapshotID = nil
         activeContextTitle = nil
         activeContextWasTruncated = false
+        clearRetainedPhoto()
     }
 
     /// Context changes form an explicit session boundary. Stored snapshots remain unchanged.
@@ -287,7 +296,8 @@ final class SessionStore: ObservableObject {
         recognizedText: String,
         includeInConversation: Bool = false,
         photoRelativePath: String? = nil,
-        expectedSessionID: UUID? = nil
+        expectedSessionID: UUID? = nil,
+        retainForSession: Bool = false
     ) async -> AnswerRecord? {
         guard isForeground, !Task.isCancelled else { return nil }
         // Capture/OCR can complete after End or after another session has started.
@@ -303,6 +313,14 @@ final class SessionStore: ObservableObject {
             return nil
         }
         let question = recognizedText.isEmpty ? "Реши задачу на фотографии" : recognizedText
+        if retainForSession, photoProvider.capabilities.supportsImages {
+            retainedPhoto = RetainedPhoto(
+                sessionID: session.id,
+                jpeg: jpeg,
+                providerSelection: settings.primaryProvider
+            )
+            retainedPhotoCount = 1
+        }
         var assistantMessage: ConversationMessageRecord?
 
         if includeInConversation {
@@ -337,6 +355,11 @@ final class SessionStore: ObservableObject {
         } onCancel: {
             Task { @MainActor [weak self] in self?.scheduler.cancel(requestID) }
         }
+    }
+
+    func clearRetainedPhoto() {
+        retainedPhoto = nil
+        retainedPhotoCount = 0
     }
 
     func preparePhotoSession() -> UUID? {
@@ -786,8 +809,18 @@ final class SessionStore: ObservableObject {
         let reserve = settings.mockMode || !settings.latencyFallbackEnabled
             ? nil
             : (providerFactory?(settings.fallbackProvider) ?? registry.provider(settings.fallbackProvider, snapshotCredentials: true))
+        // A retained image is session- and provider-bound. Changing the primary
+        // never forwards an older image to a new recipient without another opt-in.
+        let retainedUpload: Data? = if let retainedPhoto,
+                                      retainedPhoto.sessionID == session.id,
+                                      retainedPhoto.providerSelection == settings.primaryProvider {
+            retainedPhoto.jpeg
+        } else {
+            nil
+        }
         // A vision request may not silently turn into OCR-only on fallback.
-        let upload = primary.capabilities.supportsImages ? imageJPEG : nil
+        let requestedUpload = imageJPEG ?? retainedUpload
+        let upload = primary.capabilities.supportsImages ? requestedUpload : nil
         let fallback = upload != nil && reserve?.capabilities.supportsImages != true ? nil : reserve
         let profile: PromptProfileKind = mode == .photo ? .photo : (conversationMessage == nil ? .live : .conversation)
         let promptSnapshot = settings.promptSnapshot(for: profile)

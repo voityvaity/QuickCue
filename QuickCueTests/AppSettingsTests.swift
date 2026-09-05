@@ -16,6 +16,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.listeningNavigationPolicy, .ask)
         XCTAssertEqual(settings.answerTriggerPolicy, .automatic)
         XCTAssertFalse(settings.latencyFallbackEnabled)
+        XCTAssertFalse(settings.bleRemoteEnabled)
+        XCTAssertTrue(settings.bleRemoteServiceUUID.isEmpty)
     }
 
     func testCostEstimateUsesConfigurableRates() {
@@ -44,6 +46,21 @@ final class AppSettingsTests: XCTestCase {
         )
 
         XCTAssertEqual(provider.kind, .yandexGPT)
+    }
+
+    func testBLERemoteConfigurationPersistsWithoutStartingDiscovery() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        settings.bleRemoteEnabled = true
+        settings.bleRemoteServiceUUID = "180D"
+        settings.bleRemoteCharacteristicUUID = "2A37"
+
+        let reopened = AppSettings(defaults: defaults)
+        XCTAssertTrue(reopened.bleRemoteEnabled)
+        XCTAssertEqual(reopened.bleRemoteServiceUUID, "180D")
+        XCTAssertEqual(reopened.bleRemoteCharacteristicUUID, "2A37")
     }
 
     func testUpgradePreservesPreviouslyImplicitFallbackButFreshInstallDoesNotEnableIt() {

@@ -212,6 +212,8 @@ struct ConversationView: View {
             }
             PhotoTransferDisclosure(compact: true)
                 .padding(.horizontal)
+            RetainedPhotoBadge()
+                .padding(.horizontal)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 12)
