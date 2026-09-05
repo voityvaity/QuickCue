@@ -123,15 +123,42 @@ enum AnswerTriggerPolicy: String, CaseIterable, Codable, Identifiable, Sendable 
     }
 }
 
-struct CustomProviderProfile: Codable, Hashable, Identifiable, Sendable {
+struct ModelProfile: Codable, Equatable, Identifiable, Sendable {
+    var id: UUID
+    var apiModelID: String
+    var displayName: String
+    var capabilities: ProviderModelCapabilities
+    var selectionPolicy: ModelSelectionPolicy
+    var inputRateRUB: Double
+    var outputRateRUB: Double
+
+    init(
+        id: UUID = UUID(),
+        apiModelID: String = "",
+        displayName: String = "",
+        capabilities: ProviderModelCapabilities = .unknown,
+        selectionPolicy: ModelSelectionPolicy? = nil,
+        inputRateRUB: Double = 0,
+        outputRateRUB: Double = 0
+    ) {
+        self.id = id
+        self.apiModelID = apiModelID
+        self.displayName = displayName.isEmpty ? apiModelID : displayName
+        self.capabilities = capabilities
+        self.selectionPolicy = selectionPolicy ?? .explicit(apiModelID)
+        self.inputRateRUB = inputRateRUB
+        self.outputRateRUB = outputRateRUB
+    }
+}
+
+struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var displayName: String
     var baseURL: String
     var protocolKind: CustomProviderProtocol
     var authScheme: CustomAuthScheme
-    var modelName: String
-    var inputRateRUB: Double
-    var outputRateRUB: Double
+    var models: [ModelProfile]
+    var selectedModelID: UUID?
 
     init(
         id: UUID = UUID(),
@@ -141,22 +168,122 @@ struct CustomProviderProfile: Codable, Hashable, Identifiable, Sendable {
         authScheme: CustomAuthScheme = .bearer,
         modelName: String = "",
         inputRateRUB: Double = 0,
-        outputRateRUB: Double = 0
+        outputRateRUB: Double = 0,
+        models: [ModelProfile]? = nil,
+        selectedModelID: UUID? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.baseURL = baseURL
         self.protocolKind = protocolKind
         self.authScheme = authScheme
-        self.modelName = modelName
-        self.inputRateRUB = inputRateRUB
-        self.outputRateRUB = outputRateRUB
+        let initialModels = models ?? [ModelProfile(
+            apiModelID: modelName,
+            inputRateRUB: inputRateRUB,
+            outputRateRUB: outputRateRUB
+        )]
+        self.models = initialModels
+        self.selectedModelID = selectedModelID.flatMap { id in initialModels.contains(where: { $0.id == id }) ? id : nil }
+            ?? initialModels.first?.id
     }
 
     var selection: ProviderSelection { .custom(id) }
     var keychainAccount: String { "api-key.custom.\(id.uuidString.lowercased())" }
 
+    var selectedModel: ModelProfile? {
+        get {
+            if let selectedModelID, let selected = models.first(where: { $0.id == selectedModelID }) { return selected }
+            return models.first
+        }
+        set {
+            guard let newValue else {
+                selectedModelID = nil
+                return
+            }
+            if let index = models.firstIndex(where: { $0.id == newValue.id }) { models[index] = newValue }
+            else { models.append(newValue) }
+            selectedModelID = newValue.id
+        }
+    }
+
+    var modelName: String {
+        get { selectedModel?.apiModelID ?? "" }
+        set {
+            if var selected = selectedModel {
+                selected.apiModelID = newValue
+                if selected.displayName.isEmpty { selected.displayName = newValue }
+                selected.selectionPolicy = .explicit(newValue)
+                self.selectedModel = selected
+            } else {
+                let model = ModelProfile(apiModelID: newValue)
+                models = [model]
+                selectedModelID = model.id
+            }
+        }
+    }
+
+    var inputRateRUB: Double {
+        get { selectedModel?.inputRateRUB ?? 0 }
+        set {
+            guard var selected = selectedModel else { return }
+            selected.inputRateRUB = newValue
+            self.selectedModel = selected
+        }
+    }
+
+    var outputRateRUB: Double {
+        get { selectedModel?.outputRateRUB ?? 0 }
+        set {
+            guard var selected = selectedModel else { return }
+            selected.outputRateRUB = newValue
+            self.selectedModel = selected
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, displayName, baseURL, protocolKind, authScheme, models, selectedModelID
+        case modelName, inputRateRUB, outputRateRUB
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        displayName = try values.decode(String.self, forKey: .displayName)
+        baseURL = try values.decode(String.self, forKey: .baseURL)
+        protocolKind = try values.decode(CustomProviderProtocol.self, forKey: .protocolKind)
+        authScheme = try values.decode(CustomAuthScheme.self, forKey: .authScheme)
+        if let decodedModels = try values.decodeIfPresent([ModelProfile].self, forKey: .models), !decodedModels.isEmpty {
+            models = decodedModels
+            let requested = try values.decodeIfPresent(UUID.self, forKey: .selectedModelID)
+            selectedModelID = requested.flatMap { id in decodedModels.contains(where: { $0.id == id }) ? id : nil }
+                ?? decodedModels.first?.id
+        } else {
+            let legacyModel = try values.decodeIfPresent(String.self, forKey: .modelName) ?? ""
+            let model = ModelProfile(
+                apiModelID: legacyModel,
+                inputRateRUB: try values.decodeIfPresent(Double.self, forKey: .inputRateRUB) ?? 0,
+                outputRateRUB: try values.decodeIfPresent(Double.self, forKey: .outputRateRUB) ?? 0
+            )
+            models = [model]
+            selectedModelID = model.id
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(displayName, forKey: .displayName)
+        try values.encode(baseURL, forKey: .baseURL)
+        try values.encode(protocolKind, forKey: .protocolKind)
+        try values.encode(authScheme, forKey: .authScheme)
+        try values.encode(models, forKey: .models)
+        try values.encodeIfPresent(selectedModelID, forKey: .selectedModelID)
+    }
+
 }
+
+/// Source-compatible name for the B3a code while persisted profiles use the B3b model.
+typealias CustomProviderProfile = ProviderProfile
 
 enum ProviderConnectionState: String, Codable, Sendable {
     case unconfigured

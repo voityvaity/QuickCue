@@ -122,6 +122,57 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.fallbackProvider, second.selection)
     }
 
+    func testLegacySingleModelProfileMigratesWithoutChangingKeychainReference() throws {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let profileID = UUID()
+        let legacy = """
+        [{"id":"\(profileID.uuidString)","displayName":"Legacy","baseURL":"https://legacy.example/v1","protocolKind":"openAIChatCompletions","authScheme":"bearer","modelName":"legacy-model","inputRateRUB":12,"outputRateRUB":34}]
+        """
+        defaults.set(try XCTUnwrap(legacy.data(using: .utf8)), forKey: "settings.customProviders.v1")
+
+        let settings = AppSettings(defaults: defaults)
+        let migrated = try XCTUnwrap(settings.customProviders.first)
+        XCTAssertEqual(migrated.id, profileID)
+        XCTAssertEqual(migrated.keychainAccount, "api-key.custom.\(profileID.uuidString.lowercased())")
+        XCTAssertEqual(migrated.models.count, 1)
+        XCTAssertEqual(migrated.modelName, "legacy-model")
+        XCTAssertEqual(migrated.inputRateRUB, 12)
+        XCTAssertEqual(migrated.outputRateRUB, 34)
+        XCTAssertNotNil(defaults.data(forKey: "settings.providerProfiles.v2"))
+        XCTAssertNotNil(defaults.data(forKey: "settings.customProviders.v1"), "Keep legacy bytes for recovery")
+    }
+
+    func testSeveralModelsPersistAndSwitchExplicitlyWithinOneProvider() throws {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fast = ModelProfile(apiModelID: "fast-model", displayName: "Быстрая")
+        let vision = ModelProfile(apiModelID: "vision-model", displayName: "С фото")
+        let profile = CustomProviderProfile(
+            displayName: "Gateway",
+            baseURL: "https://gateway.example/v1",
+            models: [fast, vision],
+            selectedModelID: fast.id
+        )
+        let settings = AppSettings(defaults: defaults)
+        settings.createCustomProvider(profile)
+        XCTAssertEqual(settings.modelName(for: profile.selection), "fast-model")
+
+        var changed = try XCTUnwrap(settings.customProvider(for: profile.selection))
+        changed.selectedModelID = vision.id
+        settings.updateCustomProvider(changed)
+        XCTAssertEqual(settings.modelName(for: profile.selection), "vision-model")
+
+        let reopened = AppSettings(defaults: defaults)
+        let persisted = try XCTUnwrap(reopened.customProvider(for: profile.selection))
+        XCTAssertEqual(persisted.id, profile.id)
+        XCTAssertEqual(persisted.models.map(\.apiModelID), ["fast-model", "vision-model"])
+        XCTAssertEqual(persisted.selectedModelID, vision.id)
+        XCTAssertEqual(reopened.modelName(for: profile.selection), "vision-model")
+    }
+
     func testConnectionVerificationPersistsAndModelEditInvalidatesIt() {
         let suite = "AppSettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

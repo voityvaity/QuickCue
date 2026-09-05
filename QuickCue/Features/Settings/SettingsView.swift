@@ -434,9 +434,40 @@ private struct CustomProviderSettingsView: View {
             }
 
             Section {
-                TextField("ID модели", text: $draft.modelName)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                if !draft.models.isEmpty {
+                    Picker("Использовать", selection: $draft.selectedModelID) {
+                        ForEach(draft.models) { model in
+                            Text(model.displayName.isEmpty ? model.apiModelID : model.displayName)
+                                .tag(Optional(model.id))
+                        }
+                    }
+                }
+
+                ForEach($draft.models) { $model in
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("ID модели", text: $model.apiModelID)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        TextField("Понятное название (необязательно)", text: $model.displayName)
+                        if draft.models.count > 1 {
+                            Button("Удалить эту модель", role: .destructive) {
+                                let removedID = model.id
+                                draft.models.removeAll { $0.id == removedID }
+                                if draft.selectedModelID == removedID { draft.selectedModelID = draft.models.first?.id }
+                            }
+                            .font(.footnote)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Button {
+                    let model = ModelProfile()
+                    draft.models.append(model)
+                    draft.selectedModelID = model.id
+                } label: {
+                    Label("Добавить модель", systemImage: "plus.circle")
+                }
 
                 Button {
                     discoveryTask?.cancel()
@@ -450,7 +481,10 @@ private struct CustomProviderSettingsView: View {
                 .disabled(discoveryState == .loading || !hasStoredKey || draft.baseURL.isEmpty)
 
                 if !discoveredModels.isEmpty {
-                    Picker("Доступная модель", selection: $draft.modelName) {
+                    Picker("Добавить из каталога", selection: Binding(
+                        get: { "" },
+                        set: { addDiscoveredModel($0) }
+                    )) {
                         Text("Выберите модель").tag("")
                         ForEach(discoveredModels) { model in
                             Text(model.id).tag(model.id)
@@ -485,7 +519,8 @@ private struct CustomProviderSettingsView: View {
                 Section("Перед сохранением") {
                     LabeledContent("Владелец адреса", value: originPreview.origin)
                     LabeledContent("Протокол", value: originPreview.protocolTitle)
-                    LabeledContent("Модель", value: draft.modelName.isEmpty ? "Не выбрана" : draft.modelName)
+                    LabeledContent("Модели", value: draft.models.filter { !$0.apiModelID.isEmpty }.map(\.apiModelID).joined(separator: ", "))
+                    LabeledContent("Выбрана", value: draft.modelName.isEmpty ? "Не выбрана" : draft.modelName)
                     Text(originPreview.dataDisclosure)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -598,7 +633,17 @@ private struct CustomProviderSettingsView: View {
     private func saveDraft(requireModel: Bool = true) -> Bool {
         draft.displayName = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.baseURL = draft.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft.modelName = draft.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.models = draft.models.map { model in
+            var cleaned = model
+            cleaned.apiModelID = model.apiModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            cleaned.displayName = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleaned.displayName.isEmpty { cleaned.displayName = cleaned.apiModelID }
+            cleaned.selectionPolicy = .explicit(cleaned.apiModelID)
+            cleaned.inputRateRUB = max(0, cleaned.inputRateRUB)
+            cleaned.outputRateRUB = max(0, cleaned.outputRateRUB)
+            return cleaned
+        }
+        if draft.selectedModelID == nil { draft.selectedModelID = draft.models.first?.id }
         guard !draft.displayName.isEmpty, (!requireModel || !draft.modelName.isEmpty),
               let url = URL(string: draft.baseURL), url.scheme?.lowercased() == "https",
               url.host != nil, url.user == nil, url.password == nil,
@@ -660,7 +705,7 @@ private struct CustomProviderSettingsView: View {
                     ? .unavailable("Сервис не сообщил подходящих текстовых моделей. Введите ID из его инструкции.")
                     : .available(candidates.count)
                 if candidates.count == 1, draft.modelName.isEmpty {
-                    draft.modelName = candidates[0].id
+                    addDiscoveredModel(candidates[0].id)
                 }
             case .unsupported:
                 discoveryState = .unavailable("Этот сервис не предоставляет каталог /models. Введите ID из его инструкции.")
@@ -672,6 +717,23 @@ private struct CustomProviderSettingsView: View {
         } catch {
             discoveryState = .unavailable(error.localizedDescription)
         }
+    }
+
+    private func addDiscoveredModel(_ modelID: String) {
+        guard !modelID.isEmpty else { return }
+        if let existing = draft.models.first(where: { $0.apiModelID == modelID }) {
+            draft.selectedModelID = existing.id
+            return
+        }
+        let metadata = discoveredModels.first { $0.id == modelID }
+        let model = ModelProfile(
+            apiModelID: modelID,
+            capabilities: metadata?.capabilities ?? .unknown,
+            selectionPolicy: .explicit(modelID)
+        )
+        draft.models.removeAll { $0.apiModelID.isEmpty && $0.id == draft.selectedModelID }
+        draft.models.append(model)
+        draft.selectedModelID = model.id
     }
 
     private func metadataExplanation(_ reason: ProviderMetadataUnavailableReason) -> String {
