@@ -163,7 +163,9 @@ final class ProviderSetupCoordinator: ObservableObject {
         }
     }
 
-    private(set) var candidateAccount = Self.makeCandidateAccount()
+    // Swift rejects covariant `Self` in a class stored-property initializer,
+    // including for final classes. Use the concrete type at this boundary.
+    private(set) var candidateAccount = ProviderSetupCoordinator.makeCandidateAccount()
 
     private let settings: AppSettings
     private let secretStore: SecretStore

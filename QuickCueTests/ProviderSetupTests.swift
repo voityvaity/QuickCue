@@ -218,6 +218,16 @@ final class ProviderSetupTests: XCTestCase {
         XCTAssertNil(ProviderPreset.preset(for: .custom))
     }
 
+    func testCoordinatorsStartWithDistinctTemporaryKeychainAccounts() {
+        let fixture = makeFixture()
+        let first = ProviderSetupCoordinator(settings: fixture.settings, defaults: fixture.defaults)
+        let second = ProviderSetupCoordinator(settings: fixture.settings, defaults: fixture.defaults)
+
+        XCTAssertTrue(first.candidateAccount.hasPrefix("api-key.setup."))
+        XCTAssertTrue(second.candidateAccount.hasPrefix("api-key.setup."))
+        XCTAssertNotEqual(first.candidateAccount, second.candidateAccount)
+    }
+
     private func makeFixture() -> (settings: AppSettings, defaults: UserDefaults) {
         let suite = "ProviderSetupTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
