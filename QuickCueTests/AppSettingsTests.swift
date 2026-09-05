@@ -13,6 +13,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.sessionQuestionLimit, 150)
         XCTAssertEqual(settings.sessionPhotoLimit, 30)
         XCTAssertEqual(settings.contextMinutes, 5)
+        XCTAssertEqual(settings.listeningNavigationPolicy, .ask)
+        XCTAssertEqual(settings.answerTriggerPolicy, .automatic)
     }
 
     func testCostEstimateUsesConfigurableRates() {
@@ -41,6 +43,39 @@ final class AppSettingsTests: XCTestCase {
         )
 
         XCTAssertEqual(provider.kind, .yandexGPT)
+    }
+
+    func testListeningAndAnswerPoliciesPersistIndependently() {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        settings.listeningNavigationPolicy = .continueWhileActive
+        settings.answerTriggerPolicy = .manual
+
+        let reopened = AppSettings(defaults: defaults)
+        XCTAssertEqual(reopened.listeningNavigationPolicy, .continueWhileActive)
+        XCTAssertEqual(reopened.answerTriggerPolicy, .manual)
+    }
+
+    func testMalformedCustomProfileDoesNotDiscardValidSibling() throws {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let valid = CustomProviderProfile(
+            displayName: "Still available",
+            baseURL: "https://gateway.example/v1",
+            modelName: "chat-model"
+        )
+        let encoded = try JSONEncoder().encode(valid)
+        let validObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var invalidObject = validObject
+        invalidObject["id"] = UUID().uuidString
+        invalidObject["authScheme"] = "unsupported-auth"
+        defaults.set(try JSONSerialization.data(withJSONObject: [validObject, invalidObject]), forKey: "settings.customProviders.v1")
+
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.customProviders.map(\.id), [valid.id])
     }
 
     func testSeveralCustomProvidersRemainIndependent() {

@@ -67,14 +67,58 @@ enum CustomProviderProtocol: String, CaseIterable, Codable, Identifiable, Sendab
 
 enum CustomAuthScheme: String, CaseIterable, Codable, Identifiable, Sendable {
     case bearer
+    /// Preserves profiles created before B3a, which sent `Authorization: Api-Key …`.
     case apiKey
+    case apiKeyHeader
+    case xAPIKey
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .bearer: "Bearer"
-        case .apiKey: "Api-Key"
+        case .apiKey: "Authorization: Api-Key (старый вариант)"
+        case .apiKeyHeader: "Api-Key"
+        case .xAPIKey: "x-api-key"
+        }
+    }
+
+    func headers(credential: String) -> [String: String] {
+        switch self {
+        case .bearer: ["Authorization": "Bearer \(credential)"]
+        case .apiKey: ["Authorization": "Api-Key \(credential)"]
+        case .apiKeyHeader: ["Api-Key": credential]
+        case .xAPIKey: ["x-api-key": credential]
+        }
+    }
+}
+
+enum ListeningNavigationPolicy: String, CaseIterable, Codable, Identifiable, Sendable {
+    case ask
+    case continueWhileActive
+    case stopOnTabChange
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ask: "Спрашивать"
+        case .continueWhileActive: "Продолжать"
+        case .stopOnTabChange: "Останавливать"
+        }
+    }
+}
+
+enum AnswerTriggerPolicy: String, CaseIterable, Codable, Identifiable, Sendable {
+    case automatic
+    case manual
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic: "Автоматически"
+        case .manual: "Вручную"
         }
     }
 }

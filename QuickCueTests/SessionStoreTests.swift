@@ -5,6 +5,91 @@ import XCTest
 
 @MainActor
 final class SessionStoreTests: XCTestCase {
+    func testManualSpeechSavesTranscriptButSendsOnlyAfterExplicitTap() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(
+            configureSettings: { $0.answerTriggerPolicy = .manual },
+            speechRecognizer: recognizer
+        )
+        defer { fixture.close() }
+
+        fixture.store.startListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        recognizer.emit("Как работает actor?", isFinal: true)
+
+        XCTAssertEqual(fixture.provider.requests.count, 0)
+        XCTAssertEqual(fixture.store.latestConfirmedTranscript?.text, "Как работает actor?")
+        fixture.store.answerLatestConfirmedTranscript()
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        XCTAssertEqual(fixture.provider.requests.first?.question, "Как работает actor?")
+    }
+
+    func testContinuingAcrossTabsDoesNotRestartRecognizerOrDuplicateQuestion() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(speechRecognizer: recognizer)
+        defer { fixture.close() }
+        var navigation = TabNavigationCoordinator()
+
+        fixture.store.startListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        XCTAssertEqual(
+            navigation.request(.history, whileListening: true, policy: .continueWhileActive),
+            .switched(.history, shouldStop: false)
+        )
+        XCTAssertEqual(
+            navigation.request(.conversation, whileListening: true, policy: .continueWhileActive),
+            .switched(.conversation, shouldStop: false)
+        )
+        recognizer.emit("Как работает", isFinal: false)
+        recognizer.emit("Как работает очередь?", isFinal: true)
+        try await waitUntil { fixture.provider.requests.count == 1 }
+
+        XCTAssertEqual(recognizer.startCount, 1)
+        XCTAssertEqual(recognizer.stopCount, 0)
+        XCTAssertEqual(fixture.provider.requests.first?.question, "Как работает очередь?")
+    }
+
+    func testSensitiveInputPauseAndBackgroundStopWithoutAutomaticResume() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(speechRecognizer: recognizer)
+        defer { fixture.close() }
+
+        fixture.store.startListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        XCTAssertTrue(fixture.store.pauseForSensitiveInput())
+        XCTAssertEqual(fixture.store.listeningPhase, .idle)
+        XCTAssertEqual(recognizer.stopCount, 1)
+
+        fixture.store.startListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        fixture.store.handleSceneBecameInactive()
+        fixture.store.handleSceneBecameActive()
+        XCTAssertEqual(fixture.store.listeningPhase, .idle)
+        XCTAssertEqual(recognizer.startCount, 2)
+        XCTAssertEqual(recognizer.stopCount, 2)
+    }
+
+    func testChangingAnswerPolicyDuringUtteranceDoesNotSendFinalOrBackfillIt() async throws {
+        let recognizer = ControlledSpeechRecognizer()
+        let fixture = try SessionFixture(speechRecognizer: recognizer)
+        defer { fixture.close() }
+
+        fixture.store.startListening()
+        try await waitUntil { fixture.store.listeningPhase == .listening }
+        recognizer.emit("Как работает", isFinal: false)
+        fixture.settings.answerTriggerPolicy = .manual
+        recognizer.emit("Как работает actor?", isFinal: true)
+        XCTAssertEqual(fixture.provider.requests.count, 0)
+
+        fixture.settings.answerTriggerPolicy = .automatic
+        await Task.yield()
+        XCTAssertEqual(fixture.provider.requests.count, 0)
+        recognizer.emit("Что такое очередь?", isFinal: true)
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        XCTAssertEqual(fixture.provider.requests.first?.question, "Что такое очередь?")
+        XCTAssertEqual(recognizer.startCount, 1)
+    }
+
     func testEndCancelsQueuedWorkAndLateResultsCannotEnterNewSession() async throws {
         let fixture = try SessionFixture()
         defer { fixture.close() }
@@ -198,23 +283,70 @@ private final class SessionFixture {
     let provider: SessionControlledProvider
     private let suite: String
     private let defaults: UserDefaults
+    let settings: AppSettings
 
-    init() throws {
+    init(
+        configureSettings: (AppSettings) -> Void = { _ in },
+        speechRecognizer: (any SpeechRecognizing)? = nil
+    ) throws {
         let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(isStoredInMemoryOnly: true))
         let testContext = ModelContext(container)
         let testSuite = "SessionStoreTests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: testSuite)!
         let testProvider = SessionControlledProvider()
+        let testSettings = AppSettings(defaults: testDefaults)
+        configureSettings(testSettings)
         context = testContext
         suite = testSuite
         defaults = testDefaults
         provider = testProvider
-        store = SessionStore(modelContext: testContext, settings: AppSettings(defaults: testDefaults), providerFactory: { _ in testProvider })
+        settings = testSettings
+        store = SessionStore(
+            modelContext: testContext,
+            settings: testSettings,
+            providerFactory: { _ in testProvider },
+            speechRecognizer: speechRecognizer
+        )
     }
 
     func close() {
         store.endSession()
         defaults.removePersistentDomain(forName: suite)
+    }
+}
+
+@MainActor
+private final class ControlledSpeechRecognizer: SpeechRecognizing {
+    private(set) var state: SpeechRecognitionState = .idle
+    var onStateChange: ((SpeechRecognitionState) -> Void)?
+    var onTranscript: ((String, Bool, Double) -> Void)?
+    var onUtteranceStarted: (() -> Void)?
+    var onFailure: ((Error) -> Void)?
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    func start() async throws {
+        startCount += 1
+        state = .starting
+        onStateChange?(state)
+        onUtteranceStarted?()
+        state = .listening
+        onStateChange?(state)
+    }
+
+    func stop() {
+        stopCount += 1
+        state = .stopping
+        onStateChange?(state)
+        state = .idle
+        onStateChange?(state)
+    }
+
+    func finishCurrentUtterance() {}
+
+    func emit(_ text: String, isFinal: Bool) {
+        onTranscript?(text, isFinal, 1)
+        if isFinal { onUtteranceStarted?() }
     }
 }
 

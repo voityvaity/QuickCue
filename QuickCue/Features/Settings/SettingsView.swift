@@ -82,6 +82,18 @@ struct SettingsView: View {
                         Label("Промпт и стиль ответа", systemImage: "text.quote")
                     }
 
+                    Picker("При смене вкладки", selection: $settings.listeningNavigationPolicy) {
+                        ForEach(ListeningNavigationPolicy.allCases) { policy in
+                            Text(policy.title).tag(policy)
+                        }
+                    }
+
+                    Picker("Ответ на речь", selection: $settings.answerTriggerPolicy) {
+                        ForEach(AnswerTriggerPolicy.allCases) { policy in
+                            Text(policy.title).tag(policy)
+                        }
+                    }
+
                     NavigationLink {
                         SpeakerDetectionInfoView()
                     } label: {
@@ -113,7 +125,7 @@ struct SettingsView: View {
                     Label("Аудио не сохраняется", systemImage: "waveform.slash")
                     Label("Текст, ответы и фото хранятся локально", systemImage: "iphone.gen3")
                     Label("API-ключи хранятся в Keychain", systemImage: "key.fill")
-                    Label("При смене вкладки микрофон останавливается", systemImage: "hand.raised")
+                    Label("Микрофон работает только при активном приложении", systemImage: "hand.raised")
                     Text("При запросе текст передаётся выбранному AI. Фото передаётся vision-модели, а текстовой модели — только распознанный текст. В тестовом режиме данные не отправляются.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -181,6 +193,13 @@ private enum ProviderTestState: Equatable {
     case testing
     case success(milliseconds: Int)
     case failure(String)
+}
+
+private enum CustomModelDiscoveryState: Equatable {
+    case idle
+    case loading
+    case available(Int)
+    case unavailable(String)
 }
 
 private struct BuiltInProviderSettingsView: View {
@@ -350,6 +369,10 @@ private struct CustomProviderSettingsView: View {
     @State private var confirmDelete = false
     @State private var validationMessage: String?
     @State private var testTask: Task<Void, Never>?
+    @State private var discoveryTask: Task<Void, Never>?
+    @State private var discoveryState: CustomModelDiscoveryState = .idle
+    @State private var discoveredModels: [ProviderModelMetadata] = []
+    @State private var showProfileImport = false
 
     private var isSaved: Bool { settings.customProviders.contains { $0.id == providerID } }
     private var hasUnsavedChanges: Bool {
@@ -358,6 +381,23 @@ private struct CustomProviderSettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                Button {
+                    showProfileImport = true
+                } label: {
+                    Label("Импортировать JSON или QR", systemImage: "qrcode.viewfinder")
+                }
+                if isSaved, let exportedProfile {
+                    ShareLink(item: exportedProfile) {
+                        Label("Поделиться профилем без ключа", systemImage: "square.and.arrow.up")
+                    }
+                }
+            } header: {
+                Text("Быстрое заполнение")
+            } footer: {
+                Text("Импорт не выполняет команды и не меняет настройки iPhone. Неизвестные поля отклоняются.")
+            }
+
             Section {
                 TextField("Название", text: $draft.displayName)
                 TextField("Base URL или полный endpoint", text: $draft.baseURL)
@@ -388,6 +428,29 @@ private struct CustomProviderSettingsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
+                Button {
+                    discoveryTask?.cancel()
+                    discoveryTask = Task { await discoverModels() }
+                } label: {
+                    HStack {
+                        if discoveryState == .loading { ProgressView().controlSize(.small) }
+                        Text("Получить доступные модели")
+                    }
+                }
+                .disabled(discoveryState == .loading || !hasStoredKey || draft.baseURL.isEmpty)
+
+                if !discoveredModels.isEmpty {
+                    Picker("Доступная модель", selection: $draft.modelName) {
+                        Text("Выберите модель").tag("")
+                        ForEach(discoveredModels) { model in
+                            Text(model.id).tag(model.id)
+                        }
+                    }
+                }
+                if case .unavailable(let detail) = discoveryState {
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }
+
                 LabeledContent("Ввод / 1 млн токенов") {
                     TextField("0", value: $draft.inputRateRUB, format: .number)
                         .keyboardType(.decimalPad)
@@ -405,7 +468,18 @@ private struct CustomProviderSettingsView: View {
             } header: {
                 Text("Модель и стоимость")
             } footer: {
-                Text("ID модели берётся из кабинета конкретного сервиса. Тарифы нужны только для локальной оценки.")
+                Text("QuickCue попробует получить каталог сам. Если сервис не поддерживает каталог или не сообщает назначение моделей, выберите модель из его инструкции. Модели для embeddings, аудио и realtime не выбираются автоматически. Тарифы нужны только для локальной оценки.")
+            }
+
+            if let originPreview {
+                Section("Перед сохранением") {
+                    LabeledContent("Владелец адреса", value: originPreview.origin)
+                    LabeledContent("Протокол", value: originPreview.protocolTitle)
+                    LabeledContent("Модель", value: draft.modelName.isEmpty ? "Не выбрана" : draft.modelName)
+                    Text(originPreview.dataDisclosure)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
@@ -417,7 +491,7 @@ private struct CustomProviderSettingsView: View {
                 }
 
                 Button(hasStoredKey ? "Сохранить и заменить API-ключ" : "Сохранить и добавить API-ключ") {
-                    if saveDraft() { showKeyEditor = true }
+                    if saveDraft(requireModel: false) { showKeyEditor = true }
                 }
 
                 Button {
@@ -426,7 +500,7 @@ private struct CustomProviderSettingsView: View {
                 } label: {
                     HStack {
                         if testState == .testing { ProgressView().controlSize(.small) }
-                        Text("Сохранить и проверить")
+                        Text("Проверить и использовать")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -472,7 +546,10 @@ private struct CustomProviderSettingsView: View {
             }
         }
         .task { load() }
-        .onDisappear(perform: cancelTest)
+        .onDisappear {
+            cancelTest()
+            discoveryTask?.cancel()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { cancelTest() }
         }
@@ -481,6 +558,14 @@ private struct CustomProviderSettingsView: View {
                 title: draft.displayName,
                 keychainAccount: draft.keychainAccount
             )
+        }
+        .sheet(isPresented: $showProfileImport) {
+            CustomProviderImportView(profileID: providerID) { imported in
+                draft = imported
+                validationMessage = nil
+                discoveredModels = []
+                discoveryState = .idle
+            }
         }
         .alert("Удалить провайдера?", isPresented: $confirmDelete) {
             Button("Удалить", role: .destructive) { deleteProvider() }
@@ -500,15 +585,17 @@ private struct CustomProviderSettingsView: View {
     }
 
     @discardableResult
-    private func saveDraft() -> Bool {
+    private func saveDraft(requireModel: Bool = true) -> Bool {
         draft.displayName = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.baseURL = draft.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.modelName = draft.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !draft.displayName.isEmpty, !draft.modelName.isEmpty,
+        guard !draft.displayName.isEmpty, (!requireModel || !draft.modelName.isEmpty),
               let url = URL(string: draft.baseURL), url.scheme?.lowercased() == "https",
               url.host != nil, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil else {
-            validationMessage = "Заполните название, ID модели и HTTPS-адрес без ключа, пароля и параметров запроса. Затем добавьте API-ключ."
+            validationMessage = requireModel
+                ? "Заполните название, ID модели и HTTPS-адрес без ключа, пароля и параметров запроса."
+                : "Заполните название и HTTPS-адрес без ключа, пароля и параметров запроса."
             return false
         }
         draft.inputRateRUB = max(0, draft.inputRateRUB)
@@ -529,6 +616,69 @@ private struct CustomProviderSettingsView: View {
         testState = .idle
     }
 
+    private var exportedProfile: String? {
+        try? CustomProviderProfileCodec.encode(draft)
+    }
+
+    private var originPreview: CustomProviderImportPreview? {
+        if let preview = try? CustomProviderProfileCodec.preview(for: draft) { return preview }
+        var temporary = draft
+        temporary.modelName = temporary.modelName.isEmpty ? "model-not-selected" : temporary.modelName
+        return try? CustomProviderProfileCodec.preview(for: temporary)
+    }
+
+    private func discoverModels() async {
+        guard !Task.isCancelled else { return }
+        do {
+            _ = try CustomOpenAIProvider.modelsEndpoint(from: draft.baseURL)
+            discoveryState = .loading
+            let profile = draft
+            let keychainAccount = profile.keychainAccount
+            let result = try await ProviderMetadataClient().metadata(
+                for: profile.selection,
+                customProfile: profile,
+                credential: { try KeychainStore().read(account: keychainAccount) }
+            )
+            guard !Task.isCancelled else { return }
+            switch result {
+            case .available(let snapshot):
+                let candidates = snapshot.models.filter {
+                    !$0.isExperimental && ProviderModelSelector.isPlausibleTextAssistant(modelID: $0.id)
+                }
+                discoveredModels = candidates
+                discoveryState = candidates.isEmpty
+                    ? .unavailable("Сервис не сообщил подходящих текстовых моделей. Введите ID из его инструкции.")
+                    : .available(candidates.count)
+                if candidates.count == 1, draft.modelName.isEmpty {
+                    draft.modelName = candidates[0].id
+                }
+            case .unsupported:
+                discoveryState = .unavailable("Этот сервис не предоставляет каталог /models. Введите ID из его инструкции.")
+            case .unavailable(let reason):
+                discoveryState = .unavailable(metadataExplanation(reason))
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            discoveryState = .unavailable(error.localizedDescription)
+        }
+    }
+
+    private func metadataExplanation(_ reason: ProviderMetadataUnavailableReason) -> String {
+        switch reason {
+        case .credentialMissing: "Сначала добавьте API-ключ."
+        case .unauthorized: "Ключ не принят сервисом. Рабочий профиль не менялся."
+        case .forbidden: "У ключа нет доступа к каталогу моделей. Можно ввести ID вручную."
+        case .rateLimited: "Сервис временно ограничил запросы. Повторите позже."
+        case .offline: "Нет соединения с интернетом."
+        case .timedOut: "Сервис не ответил вовремя."
+        case .rejectedURL: "Проверьте безопасный HTTPS-адрес сервиса."
+        case .invalidResponse: "Каталог сервиса имеет неподдерживаемый формат."
+        case .responseTooLarge: "Каталог слишком большой для безопасного импорта."
+        case .server: "Сервис не смог вернуть каталог. Введите ID из его инструкции."
+        }
+    }
+
     private func testConnection() async {
         guard !Task.isCancelled else { return }
         guard saveDraft() else { return }
@@ -536,6 +686,8 @@ private struct CustomProviderSettingsView: View {
         do {
             let milliseconds = try await runProviderTest(draft.selection, settings: settings)
             guard !Task.isCancelled else { return }
+            settings.primaryProvider = draft.selection
+            settings.mockMode = false
             testState = .success(milliseconds: milliseconds)
         } catch {
             guard !Task.isCancelled else { return }

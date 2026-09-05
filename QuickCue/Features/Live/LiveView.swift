@@ -80,7 +80,9 @@ struct LiveView: View {
                     }
 
                     Text(store.isListening
-                         ? "Говорите как обычно — вопросы определяются автоматически"
+                         ? (settings.answerTriggerPolicy == .automatic
+                            ? "Говорите как обычно — вопросы определяются автоматически"
+                            : "Речь сохраняется локально — отправляйте выбранную фразу кнопкой")
                          : "Начните сессию или сфотографируйте задачу одним нажатием")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -100,6 +102,13 @@ struct LiveView: View {
             }
 
             PhotoTransferDisclosure(compact: true)
+
+            Picker("Когда отвечать", selection: $settings.answerTriggerPolicy) {
+                ForEach(AnswerTriggerPolicy.allCases) { policy in
+                    Text(policy.title).tag(policy)
+                }
+            }
+            .pickerStyle(.segmented)
 
             if !store.liveTranscript.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
@@ -124,6 +133,17 @@ struct LiveView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(store.isListening ? .red : .indigo)
+
+            if let candidate = store.latestConfirmedTranscript {
+                Button {
+                    store.answerLatestConfirmedTranscript()
+                } label: {
+                    Label("Ответить сейчас", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint(candidate.text)
+            }
 
             Button {
                 withAnimation { showManualInput.toggle() }

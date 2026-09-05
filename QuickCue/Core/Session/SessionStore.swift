@@ -5,8 +5,15 @@ import UIKit
 
 @MainActor
 final class SessionStore: ObservableObject {
+    struct ConfirmedTranscript: Identifiable, Equatable {
+        let id: UUID
+        let sessionID: UUID
+        let text: String
+    }
+
     @Published private(set) var isListening = false { didSet { updateIdleTimer() } }
     @Published private(set) var isConversationListening = false { didSet { updateIdleTimer() } }
+    @Published private(set) var listeningPhase: SpeechRecognitionState = .idle
     @Published private(set) var liveTranscript = ""
     @Published private(set) var conversationLiveTranscript = ""
     @Published private(set) var currentSession: SessionRecord?
@@ -14,9 +21,9 @@ final class SessionStore: ObservableObject {
     @Published private(set) var visibleConversationMessages: [ConversationMessageRecord] = []
     @Published private(set) var activeRequestCount = 0
     @Published private(set) var pendingRequestCount = 0
+    @Published private(set) var latestConfirmedTranscript: ConfirmedTranscript?
     @Published var alertMessage: String?
 
-    let speechRecognizer = SpeechRecognizer()
     let speakerAttributionExplanation: String
 
     private enum RecognitionMode: Equatable {
@@ -39,6 +46,7 @@ final class SessionStore: ObservableObject {
     private let ledger: UsageLedger
     private let scheduler = RequestScheduler()
     private let providerFactory: ((ProviderSelection) -> any AIProvider)?
+    private let speechRecognizer: any SpeechRecognizing
     private var recognitionMode: RecognitionMode?
     private var recognitionGeneration = UUID()
     private var startTask: Task<Void, Never>?
@@ -56,7 +64,8 @@ final class SessionStore: ObservableObject {
         modelContext: ModelContext,
         settings: AppSettings,
         speakerAttributor: any SpeakerAttributing = SemanticSpeakerAttributor(),
-        providerFactory: ((ProviderSelection) -> any AIProvider)? = nil
+        providerFactory: ((ProviderSelection) -> any AIProvider)? = nil,
+        speechRecognizer: (any SpeechRecognizing)? = nil
     ) {
         self.modelContext = modelContext
         self.settings = settings
@@ -64,16 +73,20 @@ final class SessionStore: ObservableObject {
         self.speakerAttributionExplanation = speakerAttributor.explanation
         self.ledger = UsageLedger(modelContext: modelContext)
         self.providerFactory = providerFactory
+        self.speechRecognizer = speechRecognizer ?? SpeechRecognizer()
         scheduler.onCountsChanged = { [weak self] active, pending in
             self?.activeRequestCount = active
             self?.pendingRequestCount = pending
         }
 
-        speechRecognizer.onTranscript = { [weak self] text, isFinal, confidence in
+        self.speechRecognizer.onTranscript = { [weak self] text, isFinal, confidence in
             self?.receiveTranscript(text, isFinal: isFinal, confidence: confidence)
         }
-        speechRecognizer.onUtteranceStarted = { [weak self] in self?.assembler.beginUtterance() }
-        speechRecognizer.onFailure = { [weak self] error in
+        self.speechRecognizer.onStateChange = { [weak self] phase in
+            self?.listeningPhase = phase
+        }
+        self.speechRecognizer.onUtteranceStarted = { [weak self] in self?.assembler.beginUtterance() }
+        self.speechRecognizer.onFailure = { [weak self] error in
             guard let self else { return }
             self.stopCurrentRecognition()
             self.alertMessage = (error as? SpeechError)?.localizedDescription
@@ -116,6 +129,22 @@ final class SessionStore: ObservableObject {
         stopCurrentRecognition()
     }
 
+    @discardableResult
+    func pauseForSensitiveInput() -> Bool {
+        guard listeningPhase != .idle || recognitionMode != nil else { return false }
+        stopCurrentRecognition()
+        return true
+    }
+
+    var listeningStatusTitle: String {
+        switch listeningPhase {
+        case .idle: "Микрофон выключен"
+        case .starting: "Включаю микрофон…"
+        case .listening: recognitionMode == .conversation ? "Слушаю диалог" : "Слушаю эфир"
+        case .stopping: "Останавливаю микрофон…"
+        }
+    }
+
     func handleSceneBecameInactive() {
         isForeground = false
         stopAllListening()
@@ -141,6 +170,7 @@ final class SessionStore: ObservableObject {
         recentTranscripts.removeAll()
         visibleAnswers.removeAll()
         visibleConversationMessages.removeAll()
+        latestConfirmedTranscript = nil
     }
 
     func endConversation() {
@@ -157,6 +187,13 @@ final class SessionStore: ObservableObject {
         guard isForeground else { return }
         if currentSession == nil { beginSession() }
         finalizeConversationCandidate(text, confidence: 1, manual: true)
+    }
+
+    func answerLatestConfirmedTranscript() {
+        guard isForeground, let candidate = latestConfirmedTranscript,
+              currentSession?.id == candidate.sessionID, let session = currentSession else { return }
+        incrementQuestionCount(session)
+        enqueueQuestion(prompt: candidate.text, displayQuestion: candidate.text)
     }
 
     func answerPhoto(
@@ -284,6 +321,7 @@ final class SessionStore: ObservableObject {
 
     private func startRecognition(mode: RecognitionMode) {
         guard isForeground else { return }
+        if recognitionMode == mode, listeningPhase != .idle { return }
         if recognitionMode != nil { stopCurrentRecognition() }
         if currentSession == nil { beginSession() }
         recognitionMode = mode
@@ -292,6 +330,7 @@ final class SessionStore: ObservableObject {
         // Starting also displays an active stop control while permission UI is pending.
         isListening = mode == .live
         isConversationListening = mode == .conversation
+        listeningPhase = .starting
         startTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -302,6 +341,7 @@ final class SessionStore: ObservableObject {
                 guard recognitionGeneration == generation, !Task.isCancelled else { return }
                 startTask = nil
                 recognitionMode = nil
+                listeningPhase = .idle
                 isListening = false
                 isConversationListening = false
                 alertMessage = (error as? SpeechError)?.localizedDescription
@@ -311,6 +351,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func stopCurrentRecognition() {
+        guard recognitionMode != nil || listeningPhase != .idle else { return }
         recognitionGeneration = UUID()
         startTask?.cancel()
         startTask = nil
@@ -382,7 +423,7 @@ final class SessionStore: ObservableObject {
     private func finalizeLiveCandidate(_ text: String, confidence: Double, force: Bool = false) {
         guard let session = currentSession else { return }
         let detection = detector.detect(text)
-        guard registerTranscriptIfNew(
+        guard let transcript = registerTranscriptIfNew(
             detection: detection,
             confidence: confidence,
             sessionID: session.id,
@@ -390,10 +431,19 @@ final class SessionStore: ObservableObject {
             forceQuestion: force
         ) else { return }
 
-        turns.append(ContextEntry(id: UUID(), date: .now, turn: ConversationTurn(role: "speaker", text: detection.normalizedText)))
+        turns.append(ContextEntry(id: transcript.id, date: .now, turn: ConversationTurn(role: "speaker", text: detection.normalizedText)))
         trimContext()
         liveTranscript = ""
+        latestConfirmedTranscript = ConfirmedTranscript(
+            id: transcript.id,
+            sessionID: session.id,
+            text: detection.normalizedText
+        )
 
+        guard force || settings.answerTriggerPolicy == .automatic else {
+            try? modelContext.save()
+            return
+        }
         guard detection.isQuestion || force else { try? modelContext.save(); return }
         guard registerQuestionIfNew(detection.normalizedText) else { return }
         incrementQuestionCount(session)
@@ -403,7 +453,7 @@ final class SessionStore: ObservableObject {
     private func finalizeConversationCandidate(_ text: String, confidence: Double, manual: Bool = false) {
         guard let session = currentSession else { return }
         let detection = detector.detect(text)
-        guard registerTranscriptIfNew(
+        guard let _ = registerTranscriptIfNew(
             detection: detection,
             confidence: confidence,
             sessionID: session.id,
@@ -430,8 +480,7 @@ final class SessionStore: ObservableObject {
         conversationLiveTranscript = ""
         turns.append(ContextEntry(id: message.id, date: .now, turn: ConversationTurn(role: speaker.title, text: detection.normalizedText)))
         trimContext()
-
-        guard manual || (speaker == .partner && detection.isQuestion) else {
+        guard manual || (settings.answerTriggerPolicy == .automatic && speaker == .partner && detection.isQuestion) else {
             try? modelContext.save()
             return
         }
@@ -451,21 +500,22 @@ final class SessionStore: ObservableObject {
         sessionID: UUID,
         namespace: String,
         forceQuestion: Bool
-    ) -> Bool {
-        guard !detection.normalizedText.isEmpty else { return false }
+    ) -> TranscriptRecord? {
+        guard !detection.normalizedText.isEmpty else { return nil }
         let key = "\(namespace):\(detection.normalizedText.lowercased())"
         if let insertedAt = recentTranscripts[key], Date.now.timeIntervalSince(insertedAt) < 2 {
-            return false
+            return nil
         }
         recentTranscripts[key] = .now
         recentTranscripts = recentTranscripts.filter { Date.now.timeIntervalSince($0.value) < 2 }
-        modelContext.insert(TranscriptRecord(
+        let transcript = TranscriptRecord(
             sessionID: sessionID,
             text: detection.normalizedText,
             confidence: confidence,
             isQuestion: detection.isQuestion || forceQuestion
-        ))
-        return true
+        )
+        modelContext.insert(transcript)
+        return transcript
     }
 
     private func registerQuestionIfNew(_ question: String) -> Bool {

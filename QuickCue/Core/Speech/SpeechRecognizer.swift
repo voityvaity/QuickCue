@@ -7,6 +7,19 @@ enum SpeechRecognitionState: String, Equatable {
     case idle, starting, listening, stopping
 }
 
+@MainActor
+protocol SpeechRecognizing: AnyObject {
+    var state: SpeechRecognitionState { get }
+    var onStateChange: ((SpeechRecognitionState) -> Void)? { get set }
+    var onTranscript: ((String, Bool, Double) -> Void)? { get set }
+    var onUtteranceStarted: (() -> Void)? { get set }
+    var onFailure: ((Error) -> Void)? { get set }
+
+    func start() async throws
+    func stop()
+    func finishCurrentUtterance()
+}
+
 /// A generation invalidates permission requests and callbacks after Stop.
 struct SpeechLifecycle {
     private(set) var state: SpeechRecognitionState = .idle
@@ -36,15 +49,18 @@ struct SpeechLifecycle {
 }
 
 @MainActor
-final class SpeechRecognizer: ObservableObject {
+final class SpeechRecognizer: ObservableObject, SpeechRecognizing {
     @Published private(set) var transcript = ""
-    @Published private(set) var state: SpeechRecognitionState = .idle
+    @Published private(set) var state: SpeechRecognitionState = .idle {
+        didSet { onStateChange?(state) }
+    }
     @Published private(set) var authorizationDenied = false
     var isRunning: Bool { state == .listening }
 
     var onTranscript: ((String, Bool, Double) -> Void)?
     var onUtteranceStarted: (() -> Void)?
     var onFailure: ((Error) -> Void)?
+    var onStateChange: ((SpeechRecognitionState) -> Void)?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ru_RU"))
     private let audioEngine = AVAudioEngine()

@@ -105,14 +105,19 @@ final class SameOriginRedirectDelegate: NSObject, URLSessionTaskDelegate, @unche
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
         guard let source = task.originalRequest?.url, let destination = request.url,
-              source.scheme?.lowercased() == destination.scheme?.lowercased(),
-              source.host?.lowercased() == destination.host?.lowercased(),
-              Self.port(source) == Self.port(destination),
-              destination.user == nil, destination.password == nil else {
+              Self.permitsRedirect(from: source, to: destination) else {
             completionHandler(nil)
             return
         }
         completionHandler(request)
+    }
+
+    static func permitsRedirect(from source: URL, to destination: URL) -> Bool {
+        source.scheme?.lowercased() == destination.scheme?.lowercased()
+            && source.host?.lowercased() == destination.host?.lowercased()
+            && port(source) == port(destination)
+            && destination.user == nil
+            && destination.password == nil
     }
 
     private static func port(_ url: URL) -> Int { url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80) }

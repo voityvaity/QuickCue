@@ -37,15 +37,10 @@ struct CustomOpenAIProvider: AIProvider {
                         throw AIProviderError.missingCredential(.custom)
                     }
                     let endpoint = try Self.chatCompletionsEndpoint(from: profile.baseURL)
-                    let authorization: String
-                    switch profile.authScheme {
-                    case .bearer: authorization = "Bearer \(key)"
-                    case .apiKey: authorization = "Api-Key \(key)"
-                    }
                     let urlRequest = try makeAuthorizedRequest(
                         url: endpoint,
                         body: openAICompatibleBody(request: request, model: modelName),
-                        headers: ["Authorization": authorization]
+                        headers: profile.authScheme.headers(credential: key)
                     )
                     var validator = StreamCompletionValidator()
                     defer { LatencyLogger().streamSummary(provider: kind, requestID: request.id, validator: validator) }

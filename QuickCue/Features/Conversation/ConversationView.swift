@@ -100,7 +100,9 @@ struct ConversationView: View {
                 .font(.title2.bold())
             Text(hasEndedConversation
                  ? "Реплики и ответы сохранены в Истории. Можно начать новый разговор или написать вопрос ниже."
-                 : "QuickCue покажет реплики собеседника, ваши ответы и подсказки AI как обычный чат. Аудиозапись не сохраняется.")
+                 : (settings.answerTriggerPolicy == .automatic
+                    ? "QuickCue покажет реплики собеседника, ваши ответы и подсказки AI как обычный чат. Аудиозапись не сохраняется."
+                    : "QuickCue сохранит реплики без автоматических запросов. Нажмите «Отправить AI» у нужной фразы. Аудиозапись не сохраняется."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -130,6 +132,14 @@ struct ConversationView: View {
 
     private var conversationControls: some View {
         VStack(spacing: 10) {
+            Picker("Когда отвечать", selection: $settings.answerTriggerPolicy) {
+                ForEach(AnswerTriggerPolicy.allCases) { policy in
+                    Text(policy.title).tag(policy)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+
             HStack(spacing: 8) {
                 TextField("Написать вопрос AI", text: $manualText, axis: .vertical)
                     .lineLimit(1...3)

@@ -65,6 +65,7 @@ final class ProviderMetadataTests: XCTestCase {
         let request = try XCTUnwrap(recordedRequest)
         XCTAssertEqual(request.url?.absoluteString, "https://gateway.example/api/models")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Api-Key fixture-token")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Api-Key"))
     }
 
     func testUnsupportedYandexCatalogDoesNotReadCredential() async throws {

@@ -117,6 +117,15 @@ enum ProviderModelSelector {
         let id = modelID.lowercased()
         return ["experimental", "preview", "beta", "-exp", "_exp"].contains { id.contains($0) }
     }
+
+    static func isPlausibleTextAssistant(modelID: String) -> Bool {
+        let id = modelID.lowercased()
+        let excluded = [
+            "embedding", "moderation", "whisper", "transcribe", "tts", "speech",
+            "realtime", "image", "dall-e",
+        ]
+        return !excluded.contains { id.contains($0) }
+    }
 }
 
 struct ProviderMetadataHTTPResponse: Sendable {
@@ -321,20 +330,17 @@ struct ProviderMetadataClient: Sendable {
         key: String
     ) throws -> URLRequest {
         let endpoint: URL
-        let authorization: String
+        let credentialHeaders: [String: String]
         switch selection.kind {
         case .deepSeek where selection.customID == nil:
             endpoint = URL(string: "https://api.deepseek.com/models")!
-            authorization = "Bearer \(key)"
+            credentialHeaders = CustomAuthScheme.bearer.headers(credential: key)
         case .custom:
             guard let profile = customProfile, profile.selection == selection else {
                 throw AIProviderError.invalidConfiguration("Профиль провайдера не найден.")
             }
             endpoint = try CustomOpenAIProvider.modelsEndpoint(from: profile.baseURL)
-            switch profile.authScheme {
-            case .bearer: authorization = "Bearer \(key)"
-            case .apiKey: authorization = "Api-Key \(key)"
-            }
+            credentialHeaders = profile.authScheme.headers(credential: key)
         default:
             throw AIProviderError.invalidConfiguration("Каталог моделей не поддерживается.")
         }
@@ -343,7 +349,9 @@ struct ProviderMetadataClient: Sendable {
         request.httpMethod = "GET"
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        for (name, value) in credentialHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         return request
     }
 

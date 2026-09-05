@@ -23,6 +23,8 @@ final class AppSettings: ObservableObject {
         static let appearance = "settings.appearance"
         static let connectionReports = "settings.connectionReports.v1"
         static let customProviders = "settings.customProviders.v1"
+        static let listeningNavigationPolicy = "settings.listeningNavigationPolicy"
+        static let answerTriggerPolicy = "settings.answerTriggerPolicy"
     }
 
     private let defaults: UserDefaults
@@ -50,6 +52,12 @@ final class AppSettings: ObservableObject {
     @Published var conversationPrompt: String { didSet { defaults.set(conversationPrompt, forKey: Key.conversationPrompt) } }
     @Published var photoPrompt: String { didSet { defaults.set(photoPrompt, forKey: Key.photoPrompt) } }
     @Published var appearance: AppAppearance { didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) } }
+    @Published var listeningNavigationPolicy: ListeningNavigationPolicy {
+        didSet { defaults.set(listeningNavigationPolicy.rawValue, forKey: Key.listeningNavigationPolicy) }
+    }
+    @Published var answerTriggerPolicy: AnswerTriggerPolicy {
+        didSet { defaults.set(answerTriggerPolicy.rawValue, forKey: Key.answerTriggerPolicy) }
+    }
     @Published private(set) var connectionReports: [String: ProviderConnectionReport] {
         didSet { persistConnectionReports() }
     }
@@ -61,8 +69,8 @@ final class AppSettings: ObservableObject {
         self.defaults = defaults
         let decodedCustomProviders: [CustomProviderProfile]
         if let data = defaults.data(forKey: Key.customProviders),
-           let decoded = try? JSONDecoder().decode([CustomProviderProfile].self, from: data) {
-            decodedCustomProviders = decoded
+           let decoded = try? JSONDecoder().decode([FailableDecodable<CustomProviderProfile>].self, from: data) {
+            decodedCustomProviders = decoded.compactMap(\.value)
         } else {
             decodedCustomProviders = []
         }
@@ -92,6 +100,12 @@ final class AppSettings: ObservableObject {
         conversationPrompt = defaults.string(forKey: Key.conversationPrompt) ?? ""
         photoPrompt = defaults.string(forKey: Key.photoPrompt) ?? ""
         appearance = AppAppearance(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .light
+        listeningNavigationPolicy = ListeningNavigationPolicy(
+            rawValue: defaults.string(forKey: Key.listeningNavigationPolicy) ?? ""
+        ) ?? .ask
+        answerTriggerPolicy = AnswerTriggerPolicy(
+            rawValue: defaults.string(forKey: Key.answerTriggerPolicy) ?? ""
+        ) ?? .automatic
         connectionReports = decodedConnectionReports
         customProviders = decodedCustomProviders
 
@@ -352,6 +366,14 @@ final class AppSettings: ObservableObject {
         if let data = try? JSONEncoder().encode(connectionReports) {
             defaults.set(data, forKey: Key.connectionReports)
         }
+    }
+}
+
+private struct FailableDecodable<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
     }
 }
 

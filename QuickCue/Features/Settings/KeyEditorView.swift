@@ -11,6 +11,7 @@ struct KeyEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var store: SessionStore
     @State private var key = ""
     @State private var hasStoredKey = false
     @State private var errorMessage: String?
@@ -23,6 +24,7 @@ struct KeyEditorView: View {
     @State private var concealTask: Task<Void, Never>?
     @State private var scanTask: Task<Void, Never>?
     @State private var scanGeneration = UUID()
+    @State private var pausedListening = false
     private let keychain = KeychainStore()
 
     init(
@@ -40,6 +42,12 @@ struct KeyEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if pausedListening {
+                    Section {
+                        Label("Микрофон остановлен для безопасного ввода ключа", systemImage: "mic.slash.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section {
                     Group {
                         if isKeyVisible {
@@ -153,7 +161,10 @@ struct KeyEditorView: View {
                         .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .task { refreshStoredState() }
+            .task {
+                pausedListening = store.pauseForSensitiveInput()
+                refreshStoredState()
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
                     isKeyVisible = false

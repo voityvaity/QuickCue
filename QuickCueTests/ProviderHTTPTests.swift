@@ -152,6 +152,28 @@ final class ProviderHTTPTests: XCTestCase {
         )
     }
 
+    func testCustomGatewaySupportsExplicitApiKeyHeaders() async throws {
+        for (scheme, header) in [
+            (CustomAuthScheme.apiKeyHeader, "Api-Key"),
+            (CustomAuthScheme.xAPIKey, "x-api-key"),
+        ] {
+            let stub = ProviderHTTPStub(body: chatBody)
+            let profile = CustomProviderProfile(
+                baseURL: "https://gateway.example/v1",
+                authScheme: scheme,
+                modelName: "fixture-model"
+            )
+            try await consume(CustomOpenAIProvider(
+                profile: profile,
+                credential: { "fixture-token" },
+                transport: stub.transport
+            ))
+
+            XCTAssertEqual(stub.lastRequest?.value(forHTTPHeaderField: header), "fixture-token")
+            XCTAssertNil(stub.lastRequest?.value(forHTTPHeaderField: "Authorization"))
+        }
+    }
+
     func testHTTPErrorDoesNotExposeGatewayBody() async {
         let stub = ProviderHTTPStub(
             status: 401,
