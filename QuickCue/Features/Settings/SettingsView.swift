@@ -72,6 +72,15 @@ struct SettingsView: View {
                     } label: {
                         Label("Добавить своего провайдера", systemImage: "plus.circle.fill")
                     }
+
+                    if settings.corruptProviderProfileCount > 0 {
+                        Label(
+                            "Повреждённых профилей: \(settings.corruptProviderProfileCount). Исходная локальная копия сохранена для восстановления.",
+                            systemImage: "externaldrive.badge.exclamationmark"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    }
                 } header: {
                     Text("Подключение AI")
                 } footer: {
@@ -383,6 +392,7 @@ private struct CustomProviderSettingsView: View {
     @State private var discoveryState: CustomModelDiscoveryState = .idle
     @State private var discoveredModels: [ProviderModelMetadata] = []
     @State private var showProfileImport = false
+    @State private var secretHeaderToEdit: ProviderCredentialReference?
 
     private var isSaved: Bool { settings.customProviders.contains { $0.id == providerID } }
     private var hasUnsavedChanges: Bool {
@@ -427,10 +437,45 @@ private struct CustomProviderSettingsView: View {
                     }
                 }
 
+                DisclosureGroup("Дополнительные секретные заголовки") {
+                    ForEach($draft.credentialReferences) { $reference in
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("Имя заголовка", text: $reference.headerName)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            HStack {
+                                Button("Добавить или заменить значение") {
+                                    if saveDraft(requireModel: false) { secretHeaderToEdit = reference }
+                                }
+                                Spacer()
+                                Button(role: .destructive) {
+                                    removeSecretHeader(reference)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .accessibilityLabel("Удалить секретный заголовок")
+                            }
+                        }
+                    }
+                    Button {
+                        let id = UUID()
+                        draft.credentialReferences.append(.init(
+                            id: id,
+                            headerName: "X-Custom-Token",
+                            keychainAccount: draft.additionalSecretAccount(referenceID: id)
+                        ))
+                    } label: {
+                        Label("Добавить секретный заголовок", systemImage: "plus.circle")
+                    }
+                    Text("Нужны только если это прямо указано в инструкции сервиса. Значения хранятся в Keychain и не входят в экспорт.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
             } header: {
                 Text("Провайдер")
             } footer: {
-                Text("Для обычного адреса QuickCue добавит /v1/chat/completions. Можно вставить и полный HTTPS-endpoint.")
+                Text("Для обычного адреса QuickCue добавит путь выбранного протокола. Можно вставить полный HTTPS-endpoint; незнакомый домен остаётся сторонним посредником.")
             }
 
             Section {
@@ -449,6 +494,19 @@ private struct CustomProviderSettingsView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                         TextField("Понятное название (необязательно)", text: $model.displayName)
+                        Toggle("Модель принимает фото", isOn: Binding(
+                            get: { model.capabilities.vision.support == .supported },
+                            set: { supportsImages in
+                                model.capabilities = ProviderModelCapabilities(
+                                    text: .init(support: .supported, provenance: .userDeclared),
+                                    vision: .init(
+                                        support: supportsImages ? .supported : .unknown,
+                                        provenance: supportsImages ? .userDeclared : .unknown
+                                    ),
+                                    streaming: .init(support: .supported, provenance: .userDeclared)
+                                )
+                            }
+                        ))
                         if draft.models.count > 1 {
                             Button("Удалить эту модель", role: .destructive) {
                                 let removedID = model.id
@@ -478,7 +536,16 @@ private struct CustomProviderSettingsView: View {
                         Text("Получить доступные модели")
                     }
                 }
-                .disabled(discoveryState == .loading || !hasStoredKey || draft.baseURL.isEmpty)
+                .disabled(
+                    discoveryState == .loading || !hasStoredKey || draft.baseURL.isEmpty
+                        || !draft.protocolKind.supportsModelDiscovery
+                )
+
+                if !draft.protocolKind.supportsModelDiscovery {
+                    Text("Для Anthropic Messages нет стандартного /models — добавьте ID модели из инструкции сервиса.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
 
                 if !discoveredModels.isEmpty {
                     Picker("Добавить из каталога", selection: Binding(
@@ -604,6 +671,17 @@ private struct CustomProviderSettingsView: View {
                 keychainAccount: draft.keychainAccount
             )
         }
+        .sheet(item: $secretHeaderToEdit) { reference in
+            KeyEditorView(
+                title: "Заголовок \(reference.headerName)",
+                keychainAccount: reference.keychainAccount,
+                marksConnectionChanged: false,
+                onSaved: { _ in
+                    settings.markConnectionUnverified(draft.selection)
+                    secretHeaderToEdit = nil
+                }
+            )
+        }
         .sheet(isPresented: $showProfileImport) {
             CustomProviderImportView(profileID: providerID) { imported in
                 draft = imported
@@ -643,6 +721,11 @@ private struct CustomProviderSettingsView: View {
             cleaned.outputRateRUB = max(0, cleaned.outputRateRUB)
             return cleaned
         }
+        let nonEmptyModelIDs = draft.models.map(\.apiModelID).filter { !$0.isEmpty }
+        guard Set(nonEmptyModelIDs).count == nonEmptyModelIDs.count else {
+            validationMessage = "ID моделей в одном профиле не должны повторяться."
+            return false
+        }
         if draft.selectedModelID == nil { draft.selectedModelID = draft.models.first?.id }
         guard !draft.displayName.isEmpty, (!requireModel || !draft.modelName.isEmpty),
               let url = URL(string: draft.baseURL), url.scheme?.lowercased() == "https",
@@ -651,6 +734,20 @@ private struct CustomProviderSettingsView: View {
             validationMessage = requireModel
                 ? "Заполните название, ID модели и HTTPS-адрес без ключа, пароля и параметров запроса."
                 : "Заполните название и HTTPS-адрес без ключа, пароля и параметров запроса."
+            return false
+        }
+        var seenHeaders = Set<String>()
+        do {
+            for reference in draft.credentialReferences {
+                let normalized = try CustomSecretHeaderPolicy.normalized(reference.headerName)
+                guard reference.keychainAccount == draft.additionalSecretAccount(referenceID: reference.id),
+                      seenHeaders.insert(normalized.lowercased()).inserted else {
+                    validationMessage = "Проверьте дополнительные заголовки: имена не должны повторяться."
+                    return false
+                }
+            }
+        } catch {
+            validationMessage = error.localizedDescription
             return false
         }
         draft.inputRateRUB = max(0, draft.inputRateRUB)
@@ -685,14 +782,16 @@ private struct CustomProviderSettingsView: View {
     private func discoverModels() async {
         guard !Task.isCancelled else { return }
         do {
-            _ = try CustomOpenAIProvider.modelsEndpoint(from: draft.baseURL)
+            _ = try CustomOpenAIProvider.modelsEndpoint(from: draft.baseURL, protocolKind: draft.protocolKind)
             discoveryState = .loading
             let profile = draft
             let keychainAccount = profile.keychainAccount
+            let secretStore = KeychainStore()
             let result = try await ProviderMetadataClient().metadata(
                 for: profile.selection,
                 customProfile: profile,
-                credential: { try KeychainStore().read(account: keychainAccount) }
+                credential: { try secretStore.read(account: keychainAccount) },
+                additionalHeaders: ProviderRegistry.secretHeaders(for: profile, from: secretStore, snapshot: true)
             )
             guard !Task.isCancelled else { return }
             switch result {
@@ -776,11 +875,25 @@ private struct CustomProviderSettingsView: View {
     private func deleteProvider() {
         cancelTest()
         do {
+            for reference in draft.credentialReferences {
+                try KeychainStore().delete(account: reference.keychainAccount)
+            }
             try KeychainStore().delete(account: draft.keychainAccount)
             settings.deleteCustomProvider(id: providerID)
             dismiss()
         } catch {
             validationMessage = "Не удалось удалить API-ключ из Keychain. Провайдер оставлен в настройках; попробуйте снова."
+        }
+    }
+
+    private func removeSecretHeader(_ reference: ProviderCredentialReference) {
+        do {
+            try KeychainStore().delete(account: reference.keychainAccount)
+            draft.credentialReferences.removeAll { $0.id == reference.id }
+            settings.createCustomProvider(draft)
+            settings.markConnectionUnverified(draft.selection)
+        } catch {
+            validationMessage = "Не удалось удалить значение заголовка из Keychain. Профиль не изменён."
         }
     }
 }

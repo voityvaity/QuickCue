@@ -82,6 +82,48 @@ final class ProviderMetadataTests: XCTestCase {
         XCTAssertEqual(result, .unsupported)
     }
 
+    func testResponsesCatalogUsesDerivedEndpointAndAdditionalSecretHeader() async throws {
+        let recorder = MetadataRequestRecorder()
+        let profile = CustomProviderProfile(
+            baseURL: "https://gateway.example/api/v1",
+            protocolKind: .openAIResponses,
+            modelName: "manual-model"
+        )
+        let client = ProviderMetadataClient(transport: ProviderMetadataTransport { request, _ in
+            await recorder.record(request)
+            return .init(statusCode: 404, mimeType: "application/json", data: Data())
+        })
+        let result = try await client.metadata(
+            for: profile.selection,
+            customProfile: profile,
+            credential: { "fixture-token" },
+            additionalHeaders: { ["X-Tenant-Token": "fixture-extra"] }
+        )
+        XCTAssertEqual(result, .unsupported)
+        let recorded = await recorder.lastRequest()
+        let request = try XCTUnwrap(recorded)
+        XCTAssertEqual(request.url?.path, "/api/v1/models")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Tenant-Token"), "fixture-extra")
+    }
+
+    func testAnthropicCustomCatalogIsUnsupportedWithoutReadingCredentials() async throws {
+        let profile = CustomProviderProfile(
+            baseURL: "https://gateway.example/v1",
+            protocolKind: .anthropicMessages,
+            modelName: "claude-model"
+        )
+        let client = ProviderMetadataClient(transport: ProviderMetadataTransport { _, _ in
+            XCTFail("Unsupported metadata must not open the network")
+            return .init(statusCode: 500, mimeType: nil, data: Data())
+        })
+        let result = try await client.metadata(
+            for: profile.selection,
+            customProfile: profile,
+            credential: { throw MetadataFixtureError.credentialRead }
+        )
+        XCTAssertEqual(result, .unsupported)
+    }
+
     func testOversizedResponseIsUnavailableWithoutDecodingBody() async throws {
         let client = ProviderMetadataClient(
             transport: ProviderMetadataTransport { _, _ in

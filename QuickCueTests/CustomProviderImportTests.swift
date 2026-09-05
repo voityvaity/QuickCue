@@ -4,12 +4,26 @@ import XCTest
 
 final class CustomProviderImportTests: XCTestCase {
     func testRoundTripContainsNoSecretOrLocalIdentifier() throws {
-        let profile = CustomProviderProfile(
+        var profile = CustomProviderProfile(
             displayName: "Private Gateway",
             baseURL: "https://gateway.example/v1",
             authScheme: .xAPIKey,
-            modelName: "chat-model"
+            models: [
+                ModelProfile(apiModelID: "chat-model", displayName: "Chat"),
+                ModelProfile(apiModelID: "vision-model", displayName: "Vision", capabilities: .init(
+                    text: .init(support: .supported, provenance: .userDeclared),
+                    vision: .init(support: .supported, provenance: .userDeclared),
+                    streaming: .init(support: .supported, provenance: .userDeclared)
+                )),
+            ]
         )
+        let referenceID = UUID()
+        profile.credentialReferences = [.init(
+            id: referenceID,
+            headerName: "X-Tenant-Token",
+            keychainAccount: profile.additionalSecretAccount(referenceID: referenceID)
+        )]
+        profile.selectedModelID = profile.models[1].id
 
         let json = try CustomProviderProfileCodec.encode(profile)
         let imported = try CustomProviderProfileCodec.decode(json)
@@ -17,10 +31,14 @@ final class CustomProviderImportTests: XCTestCase {
         XCTAssertEqual(imported.profile.displayName, profile.displayName)
         XCTAssertEqual(imported.profile.baseURL, profile.baseURL)
         XCTAssertEqual(imported.profile.authScheme, .xAPIKey)
-        XCTAssertEqual(imported.profile.modelName, "chat-model")
+        XCTAssertEqual(imported.profile.modelName, "vision-model")
+        XCTAssertEqual(imported.profile.models.map(\.apiModelID), ["chat-model", "vision-model"])
+        XCTAssertEqual(imported.profile.credentialReferences.map(\.headerName), ["X-Tenant-Token"])
         XCTAssertEqual(imported.origin, "https://gateway.example")
         XCTAssertFalse(json.contains("\"apiKey\":"))
         XCTAssertFalse(json.contains(profile.id.uuidString))
+        XCTAssertFalse(json.contains(referenceID.uuidString))
+        XCTAssertFalse(json.contains("api-key.custom"))
         XCTAssertNotEqual(imported.profile.id, profile.id)
     }
 
@@ -38,7 +56,7 @@ final class CustomProviderImportTests: XCTestCase {
 
     func testRejectsUnsupportedVersionAndUnsafeURLs() {
         XCTAssertThrowsError(try CustomProviderProfileCodec.decode(
-            validJSON.replacingOccurrences(of: "\"schemaVersion\":1", with: "\"schemaVersion\":2")
+            validJSON.replacingOccurrences(of: "\"schemaVersion\":1", with: "\"schemaVersion\":99")
         ))
         for url in [
             "http://gateway.example",
@@ -50,6 +68,37 @@ final class CustomProviderImportTests: XCTestCase {
                 validJSON.replacingOccurrences(of: "https://gateway.example/v1", with: url)
             ), url)
         }
+    }
+
+    func testUnknownProtocolAndNestedModelFieldAreRejected() {
+        XCTAssertThrowsError(try CustomProviderProfileCodec.decode(
+            validJSON.replacingOccurrences(of: "openAIChatCompletions", with: "imaginaryProtocol")
+        ))
+        let nested = """
+        {"schemaVersion":2,"displayName":"Gateway","baseURL":"https://gateway.example/v1","protocolKind":"openAIResponses","authScheme":"bearer","models":[{"modelID":"chat-model","command":"do-not-run"}],"additionalSecretHeaderNames":[]}
+        """
+        XCTAssertThrowsError(try CustomProviderProfileCodec.decode(nested)) { error in
+            XCTAssertEqual(error as? CustomProviderProfileImportError, .unknownField("models.command"))
+        }
+    }
+
+    func testReservedImportedSecretHeadersAreRejected() {
+        let json = """
+        {"schemaVersion":2,"displayName":"Gateway","baseURL":"https://gateway.example/v1","protocolKind":"openAIResponses","authScheme":"bearer","models":[{"modelID":"chat-model"}],"additionalSecretHeaderNames":["Host"]}
+        """
+        XCTAssertThrowsError(try CustomProviderProfileCodec.decode(json))
+    }
+
+    func testSelectedModelMustExistAndModelIDsMustBeUnique() {
+        let missingSelection = """
+        {"schemaVersion":2,"displayName":"Gateway","baseURL":"https://gateway.example/v1","protocolKind":"openAIResponses","authScheme":"bearer","models":[{"modelID":"chat-model"}],"selectedModel":"missing-model","additionalSecretHeaderNames":[]}
+        """
+        XCTAssertThrowsError(try CustomProviderProfileCodec.decode(missingSelection))
+
+        let duplicateModels = """
+        {"schemaVersion":2,"displayName":"Gateway","baseURL":"https://gateway.example/v1","protocolKind":"openAIResponses","authScheme":"bearer","models":[{"modelID":"chat-model"},{"modelID":"chat-model"}],"selectedModel":"chat-model","additionalSecretHeaderNames":[]}
+        """
+        XCTAssertThrowsError(try CustomProviderProfileCodec.decode(duplicateModels))
     }
 
     func testRejectsOversizedProfile() {
@@ -74,6 +123,12 @@ final class CustomProviderImportTests: XCTestCase {
             XCTAssertEqual(scheme.headers(credential: "fixture").count, 1)
             XCTAssertFalse(SameOriginRedirectDelegate.permitsRedirect(from: source, to: otherOrigin), scheme.rawValue)
             XCTAssertTrue(SameOriginRedirectDelegate.permitsRedirect(from: source, to: sameOrigin), scheme.rawValue)
+        }
+        let additionalSecretHeaders = ["X-Tenant-Token", "X-Organization-Secret"]
+        for header in additionalSecretHeaders {
+            XCTAssertNoThrow(try CustomSecretHeaderPolicy.normalized(header))
+            XCTAssertFalse(SameOriginRedirectDelegate.permitsRedirect(from: source, to: otherOrigin), header)
+            XCTAssertTrue(SameOriginRedirectDelegate.permitsRedirect(from: source, to: sameOrigin), header)
         }
     }
 

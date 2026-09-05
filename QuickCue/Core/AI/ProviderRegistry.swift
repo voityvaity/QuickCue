@@ -68,7 +68,15 @@ struct ProviderRegistry {
                 id: selection.customID ?? UUID(),
                 displayName: "Удалённый провайдер"
             )
-            return CustomOpenAIProvider(profile: profile, credential: reader)
+            return CustomOpenAIProvider(
+                profile: profile,
+                credential: reader,
+                additionalHeaders: Self.secretHeaders(
+                    for: profile,
+                    from: secretStore,
+                    snapshot: snapshotCredentials
+                )
+            )
         }
     }
 
@@ -84,6 +92,31 @@ struct ProviderRegistry {
     static func snapshotCredential(account: String, from store: SecretStore) -> CredentialReader {
         let snapshot = Result { try store.read(account: account) }
         return { try snapshot.get() }
+    }
+
+    static func secretHeaders(
+        for profile: CustomProviderProfile,
+        from store: SecretStore,
+        snapshot: Bool
+    ) -> SecretHeadersReader {
+        let load: @Sendable () throws -> [String: String] = {
+            var headers: [String: String] = [:]
+            for reference in profile.credentialReferences {
+                guard reference.keychainAccount == profile.additionalSecretAccount(referenceID: reference.id) else {
+                    throw AIProviderError.invalidConfiguration("Повреждена ссылка на секретный заголовок.")
+                }
+                let name = try CustomSecretHeaderPolicy.normalized(reference.headerName)
+                guard headers.keys.allSatisfy({ $0.caseInsensitiveCompare(name) != .orderedSame }),
+                      let value = try store.read(account: reference.keychainAccount), !value.isEmpty else {
+                    throw AIProviderError.invalidConfiguration("Добавьте значение для секретного заголовка \(name).")
+                }
+                headers[name] = value
+            }
+            return headers
+        }
+        guard snapshot else { return load }
+        let captured = Result { try load() }
+        return { try captured.get() }
     }
 }
 

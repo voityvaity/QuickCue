@@ -233,13 +233,15 @@ struct ProviderMetadataClient: Sendable {
     }
 
     static func supportsDiscovery(for selection: ProviderSelection, customProfile: CustomProviderProfile? = nil) -> Bool {
-        selection.kind == .deepSeek || (selection.customID != nil && customProfile != nil)
+        selection.kind == .deepSeek
+            || (selection.customID != nil && customProfile?.protocolKind.supportsModelDiscovery == true)
     }
 
     func metadata(
         for selection: ProviderSelection,
         customProfile: CustomProviderProfile? = nil,
-        credential: CredentialReader
+        credential: CredentialReader,
+        additionalHeaders: SecretHeadersReader = { [:] }
     ) async throws -> MetadataResult {
         guard Self.supportsDiscovery(for: selection, customProfile: customProfile) else {
             return .unsupported
@@ -249,7 +251,10 @@ struct ProviderMetadataClient: Sendable {
         }
         let request: URLRequest
         do {
-            request = try makeRequest(for: selection, customProfile: customProfile, key: key)
+            request = try makeRequest(
+                for: selection, customProfile: customProfile, key: key,
+                additionalHeaders: try additionalHeaders()
+            )
         } catch {
             return .unavailable(.rejectedURL)
         }
@@ -327,7 +332,8 @@ struct ProviderMetadataClient: Sendable {
     private func makeRequest(
         for selection: ProviderSelection,
         customProfile: CustomProviderProfile?,
-        key: String
+        key: String,
+        additionalHeaders: [String: String]
     ) throws -> URLRequest {
         let endpoint: URL
         let credentialHeaders: [String: String]
@@ -339,7 +345,10 @@ struct ProviderMetadataClient: Sendable {
             guard let profile = customProfile, profile.selection == selection else {
                 throw AIProviderError.invalidConfiguration("Профиль провайдера не найден.")
             }
-            endpoint = try CustomOpenAIProvider.modelsEndpoint(from: profile.baseURL)
+            endpoint = try CustomOpenAIProvider.modelsEndpoint(
+                from: profile.baseURL,
+                protocolKind: profile.protocolKind
+            )
             credentialHeaders = profile.authScheme.headers(credential: key)
         default:
             throw AIProviderError.invalidConfiguration("Каталог моделей не поддерживается.")
@@ -351,6 +360,13 @@ struct ProviderMetadataClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         for (name, value) in credentialHeaders {
             request.setValue(value, forHTTPHeaderField: name)
+        }
+        for (name, value) in additionalHeaders {
+            let normalized = try CustomSecretHeaderPolicy.normalized(name)
+            guard credentialHeaders.keys.allSatisfy({ $0.caseInsensitiveCompare(normalized) != .orderedSame }) else {
+                throw AIProviderError.invalidConfiguration("Секретный заголовок дублирует основную авторизацию.")
+            }
+            request.setValue(value, forHTTPHeaderField: normalized)
         }
         return request
     }

@@ -1,30 +1,26 @@
-# Проверка QuickCue — локальный пакет A0–A3
+# Проверка QuickCue — этапы 01–06
 
-## Статус на 4 сентября 2026
+## Статус на 5 сентября 2026
 
-**Код подготовлен, новый релиз и устранение сбоя на iPhone не подтверждены.** Основа — `c55294f4d4c88ff1ef02cb89d3e07b8da01f8e99`; текущие изменения ещё не закоммичены и не отправлены. Новый GitHub Actions не запускался. Версия остаётся 0.3.1 (build 4); будущий CI запишет точный source revision.
+Пакет A подтверждён зелёным CI для `f73e0ba`; установленная поверх старой сборка сохранила историю/Keychain и дала 5/5 DeepSeek-ответов. Проверка неверного ключа на устройстве не выполнена. Базовый HEAD этапов 02–03 — `52b1ab3`, его GitHub Actions зелёный. Этапы 04–06 проверены на Windows только статически; новый GitHub Actions намеренно не ожидается в рамках этого прохода. Версия остаётся 0.3.1 (build 4).
 
 Полный перечень изменённых файлов, статусы A0/A1/A2/A3, риски и device checklist: [PACKAGE-A-REVIEW.md](docs/PACKAGE-A-REVIEW.md).
 
-Подтверждено локально на Windows:
+Подтверждено локально для этапов 04–06:
 
 - Поиск вероятных секретов, privacy manifest и номера версии: PASS (`.github/scripts/validate_repository.py`, включая untracked text candidates).
-- Tree-sitter всех 78 Swift-файлов приложения, тестов, legacy fixture и Package.swift: PASS. Это **не typecheck, не XCTest и не проверка Apple API**.
+- Tree-sitter всех 85 Swift-файлов приложения, тестов, legacy fixture и Package.swift: PASS. Это **не typecheck, не XCTest и не проверка Apple API**.
 - XML/plist, asset JSON и два YAML-файла проекта/CI: PASS.
-- Синтаксис встроенного CI Python-checker для build identity: PASS. С реальным .app не запускался.
 - `git diff --check`: PASS.
+- Добавлены regression-тесты SchemaV3 и повторного открытия базы, setup accounting без фиктивной сессии, общего request gate, multi-model legacy migration, частично повреждённой коллекции, трёх custom-протоколов, их payload/terminal/usage, безопасных заголовков и export/import без секретов.
 
-Подготовлены, но **не выполнены**:
+Не выполнены на Windows:
 
-- 114 iOS XCTest-методов: существующие 99 сохранены, добавлены 15, включая два malformed-terminal regressions A-close.
-- 20 macOS transport XCTest-методов: общий byte decoder, Foundation .lines probes, настоящий URLSession/TCP loopback, раздельная отмена до headers и после первого полученного event, redirect, MIME/HTTP/EOF/deadline/лимиты.
-- Simulator/iphoneos build, проверка SHA в .app/IPA, 5/5 DeepSeek в QuickCue на телефоне, update поверх установленной версии и сохранность истории/Keychain.
+- Xcode typecheck, iOS XCTest, Simulator/iphoneos build и проверка source revision внутри новой IPA.
+- Миграция реальной базы V2 → V3 и UserDefaults-профилей непосредственно на установленном iPhone.
+- Реальная совместимость пользовательского агрегатора с выбранным им протоколом; fixtures не заменяют его документацию и сетевой ответ.
 
-HTTP adapter tests после c55294f используют детерминированный `streamFactory`, **не URLProtocol**. В текущем пакете fixtures проходят через тот же SSEDecoder, что production. Отдельный macOS harness не использует ни URLProtocol, ни streamFactory. Полезная заглушка не выдаётся за доказательство работоспособности URLSession.
-
-Гипотеза о потере blank lines в Foundation `.lines` пока не доказана. Неправильный trim, EOF-dispatch, молчаливое отбрасывание невалидного JSON и игнорирование finish reasons подтверждены чтением прежних исходников; причинность именно пользовательского сбоя требует runtime evidence.
-
-Обновление устанавливать поверх прежнего с тем же bundle ID и совместимой подписью. Старую установку не удалять. Пакеты B–I не начинались; автоматической телеметрии/новых ключей/платных проверок в этом проходе нет.
+Обновление устанавливать поверх прежнего с тем же bundle ID и совместимой подписью. Старую установку не удалять. Автоматической телеметрии, новых ключей и платных ПК-проверок в этом проходе нет. Этап 07 не начинался.
 
 ## Исторический результат версии 0.3
 

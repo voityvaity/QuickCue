@@ -86,6 +86,21 @@ final class StreamTerminalTests: XCTestCase {
         }
     }
 
+    func testAnthropicStopRequiresValidatedStopReasonAndCannotRepeat() throws {
+        var missingReason = AnthropicStreamDecoder()
+        _ = try missingReason.events(for: message(#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Да"}}"#))
+        XCTAssertThrowsError(try missingReason.events(for: message(#"{"type":"message_stop"}"#))) {
+            XCTAssertEqual(ProviderFailure.category(for: $0), "malformed_event")
+        }
+
+        var valid = AnthropicStreamDecoder()
+        _ = try valid.events(for: message(#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#))
+        _ = try valid.events(for: message(#"{"type":"message_stop"}"#))
+        XCTAssertThrowsError(try valid.events(for: message(#"{"type":"message_stop"}"#))) {
+            XCTAssertEqual(ProviderFailure.category(for: $0), "malformed_event")
+        }
+    }
+
     func testMalformedAnthropicTerminalFieldsNeverComplete() throws {
         let malformed = [
             #"{"type":"message_delta","delta":{"stop_reason":7}}"#,

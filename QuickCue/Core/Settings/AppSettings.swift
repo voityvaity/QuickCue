@@ -25,6 +25,7 @@ final class AppSettings: ObservableObject {
         static let connectionReports = "settings.connectionReports.v1"
         static let customProviders = "settings.customProviders.v1"
         static let providerProfiles = "settings.providerProfiles.v2"
+        static let providerProfilesRecovery = "settings.providerProfiles.recovery.v2"
         static let listeningNavigationPolicy = "settings.listeningNavigationPolicy"
         static let answerTriggerPolicy = "settings.answerTriggerPolicy"
     }
@@ -67,19 +68,30 @@ final class AppSettings: ObservableObject {
     @Published private(set) var customProviders: [CustomProviderProfile] {
         didSet { persistCustomProviders() }
     }
+    @Published private(set) var corruptProviderProfileCount: Int
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let isExistingInstallation = defaults.object(forKey: Key.mockMode) != nil
             || defaults.object(forKey: Key.primaryProvider) != nil
         let decodedCustomProviders: [CustomProviderProfile]
+        let corruptProviderProfileCount: Int
         let profileData = defaults.data(forKey: Key.providerProfiles)
             ?? defaults.data(forKey: Key.customProviders)
         if let data = profileData,
            let decoded = try? JSONDecoder().decode([FailableDecodable<CustomProviderProfile>].self, from: data) {
             decodedCustomProviders = decoded.compactMap(\.value)
+            corruptProviderProfileCount = decoded.filter { $0.value == nil }.count
+            if corruptProviderProfileCount > 0,
+               defaults.data(forKey: Key.providerProfilesRecovery) == nil {
+                defaults.set(data, forKey: Key.providerProfilesRecovery)
+            }
         } else {
             decodedCustomProviders = []
+            corruptProviderProfileCount = profileData == nil ? 0 : 1
+            if let profileData, defaults.data(forKey: Key.providerProfilesRecovery) == nil {
+                defaults.set(profileData, forKey: Key.providerProfilesRecovery)
+            }
         }
         let decodedConnectionReports: [String: ProviderConnectionReport]
         if let data = defaults.data(forKey: Key.connectionReports),
@@ -116,6 +128,7 @@ final class AppSettings: ObservableObject {
         ) ?? .automatic
         connectionReports = decodedConnectionReports
         customProviders = decodedCustomProviders
+        self.corruptProviderProfileCount = corruptProviderProfileCount
 
         // One-way settings migration. The legacy payload stays untouched as a recovery source;
         // profile UUIDs keep pointing to the same Keychain accounts.
@@ -162,7 +175,8 @@ final class AppSettings: ObservableObject {
         let old = customProviders[index]
         customProviders[index] = profile
         if old.baseURL != profile.baseURL || old.modelName != profile.modelName
-            || old.protocolKind != profile.protocolKind || old.authScheme != profile.authScheme {
+            || old.protocolKind != profile.protocolKind || old.authScheme != profile.authScheme
+            || old.credentialReferences != profile.credentialReferences {
             markConnectionUnverified(profile.selection)
         }
     }

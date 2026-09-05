@@ -174,6 +174,102 @@ final class ProviderHTTPTests: XCTestCase {
         }
     }
 
+    func testCustomResponsesUsesResponsesPayloadTerminalAndUsage() async throws {
+        let stub = ProviderHTTPStub(body: """
+        data: {"type":"response.output_text.delta","delta":"Да"}
+
+        data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":2}}}
+
+        """ + "\n")
+        let profile = CustomProviderProfile(
+            baseURL: "https://gateway.example/api/v1",
+            protocolKind: .openAIResponses,
+            authScheme: .bearer,
+            modelName: "fixture-responses"
+        )
+        var usage: TokenUsage?
+        for try await event in CustomOpenAIProvider(
+            profile: profile, credential: { "fixture-token" }, transport: stub.transport
+        ).stream(request: request()) {
+            if case .usage(let value) = event { usage = value }
+        }
+
+        XCTAssertEqual(stub.lastRequest?.url?.path, "/api/v1/responses")
+        XCTAssertEqual(stub.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-token")
+        let body = try capturedJSON(from: stub)
+        XCTAssertEqual(body["model"] as? String, "fixture-responses")
+        XCTAssertEqual(body["store"] as? Bool, false)
+        XCTAssertEqual(body["max_output_tokens"] as? Int, 220)
+        XCTAssertEqual(usage, TokenUsage(inputTokens: 7, outputTokens: 2))
+    }
+
+    func testCustomAnthropicUsesMessagesPayloadHeadersAndTerminal() async throws {
+        let stub = ProviderHTTPStub(body: """
+        data: {"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":0}}}
+
+        data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Да"}}
+
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+        data: {"type":"message_stop"}
+
+        """ + "\n")
+        let profile = CustomProviderProfile(
+            baseURL: "https://gateway.example",
+            protocolKind: .anthropicMessages,
+            authScheme: .xAPIKey,
+            modelName: "fixture-claude"
+        )
+        try await consume(CustomOpenAIProvider(
+            profile: profile, credential: { "fixture-token" }, transport: stub.transport
+        ))
+
+        XCTAssertEqual(stub.lastRequest?.url?.path, "/v1/messages")
+        XCTAssertEqual(stub.lastRequest?.value(forHTTPHeaderField: "x-api-key"), "fixture-token")
+        XCTAssertEqual(stub.lastRequest?.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
+        let body = try capturedJSON(from: stub)
+        XCTAssertEqual(body["model"] as? String, "fixture-claude")
+        XCTAssertEqual(body["max_tokens"] as? Int, 220)
+    }
+
+    func testCustomAdditionalSecretHeaderIsSentWithoutEnteringPayload() async throws {
+        let stub = ProviderHTTPStub(body: chatBody)
+        let profile = CustomProviderProfile(
+            baseURL: "https://gateway.example/v1",
+            modelName: "fixture-model"
+        )
+        try await consume(CustomOpenAIProvider(
+            profile: profile,
+            credential: { "fixture-token" },
+            additionalHeaders: { ["X-Tenant-Token": "fixture-extra"] },
+            transport: stub.transport
+        ))
+        XCTAssertEqual(stub.lastRequest?.value(forHTTPHeaderField: "X-Tenant-Token"), "fixture-extra")
+        XCTAssertFalse(String(data: try XCTUnwrap(stub.lastBody), encoding: .utf8)?.contains("fixture-extra") == true)
+    }
+
+    func testCustomResponsesOutputLimitIsNotReportedAsComplete() async {
+        let stub = ProviderHTTPStub(body: """
+        data: {"type":"response.output_text.delta","delta":"Часть"}
+
+        data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}
+
+        """ + "\n")
+        let profile = CustomProviderProfile(
+            baseURL: "https://gateway.example/v1",
+            protocolKind: .openAIResponses,
+            modelName: "fixture-model"
+        )
+        do {
+            try await consume(CustomOpenAIProvider(
+                profile: profile, credential: { "fixture-token" }, transport: stub.transport
+            ))
+            XCTFail("Expected output limit")
+        } catch {
+            XCTAssertEqual(ProviderFailure.category(for: error), "output_limit")
+        }
+    }
+
     func testHTTPErrorDoesNotExposeGatewayBody() async {
         let stub = ProviderHTTPStub(
             status: 401,

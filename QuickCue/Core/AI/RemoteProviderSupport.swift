@@ -162,12 +162,17 @@ struct AnthropicStreamDecoder {
     private var inputTokens: Int?
     private var outputTokens: Int?
     private var stopFailure: StreamFailure?
+    private var receivedStopReason = false
+    private var terminal = false
 
     mutating func events(for message: SSEMessage) throws -> [AIStreamEvent] {
+        guard !terminal else { throw StreamFailure.malformedEvent }
         guard let json = JSONValue.object(message.data), let type = json["type"] as? String else { throw StreamFailure.malformedEvent }
         switch type {
         case "message_start":
-            if let body = json["message"] as? [String: Any], let usage = body["usage"] as? [String: Any] {
+            guard let body = json["message"] as? [String: Any] else { throw StreamFailure.malformedEvent }
+            if let rawUsage = body["usage"], !(rawUsage is NSNull) {
+                guard let usage = rawUsage as? [String: Any] else { throw StreamFailure.malformedEvent }
                 if let input = JSONValue.tokenCount(usage["input_tokens"]) {
                     let creation = JSONValue.tokenCount(usage["cache_creation_input_tokens"]) ?? 0
                     let read = JSONValue.tokenCount(usage["cache_read_input_tokens"]) ?? 0
@@ -181,7 +186,11 @@ struct AnthropicStreamDecoder {
                 }
             }
         case "content_block_delta":
-            if let delta = json["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let text = delta["text"] as? String {
+            guard let delta = json["delta"] as? [String: Any], let deltaType = delta["type"] as? String else {
+                throw StreamFailure.malformedEvent
+            }
+            if deltaType == "text_delta" {
+                guard let text = delta["text"] as? String else { throw StreamFailure.malformedEvent }
                 return [.textDelta(text)]
             }
         case "message_delta":
@@ -196,6 +205,7 @@ struct AnthropicStreamDecoder {
             case "tool_use": stopFailure = .unsupportedOutput
             default: stopFailure = .unsupportedTermination
             }
+            receivedStopReason = true
             if let rawUsage = json["usage"], !(rawUsage is NSNull) {
                 guard let usage = rawUsage as? [String: Any] else { throw StreamFailure.malformedEvent }
                 if let rawOutput = usage["output_tokens"], !(rawOutput is NSNull), JSONValue.tokenCount(rawOutput) == nil {
@@ -207,7 +217,9 @@ struct AnthropicStreamDecoder {
                 }
             }
         case "message_stop":
+            guard receivedStopReason else { throw StreamFailure.malformedEvent }
             if let stopFailure { throw stopFailure }
+            terminal = true
             return [.completed]
         case "error": throw AIProviderError.badResponse(200, "stream_error")
         default: break

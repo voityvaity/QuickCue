@@ -56,13 +56,27 @@ struct ProviderSelection: RawRepresentable, Codable, Hashable, Identifiable, Sen
 
 enum CustomProviderProtocol: String, CaseIterable, Codable, Identifiable, Sendable {
     case openAIChatCompletions
+    case openAIResponses
+    case anthropicMessages
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .openAIChatCompletions: "OpenAI Chat Completions"
+        case .openAIResponses: "OpenAI Responses"
+        case .anthropicMessages: "Anthropic Messages"
         }
     }
+
+    var endpointSuffix: String {
+        switch self {
+        case .openAIChatCompletions: "chat/completions"
+        case .openAIResponses: "responses"
+        case .anthropicMessages: "messages"
+        }
+    }
+
+    var supportsModelDiscovery: Bool { self != .anthropicMessages }
 }
 
 enum CustomAuthScheme: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -151,6 +165,18 @@ struct ModelProfile: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+struct ProviderCredentialReference: Codable, Equatable, Identifiable, Sendable {
+    var id: UUID
+    var headerName: String
+    var keychainAccount: String
+
+    init(id: UUID = UUID(), headerName: String, keychainAccount: String) {
+        self.id = id
+        self.headerName = headerName
+        self.keychainAccount = keychainAccount
+    }
+}
+
 struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var displayName: String
@@ -159,6 +185,7 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
     var authScheme: CustomAuthScheme
     var models: [ModelProfile]
     var selectedModelID: UUID?
+    var credentialReferences: [ProviderCredentialReference]
 
     init(
         id: UUID = UUID(),
@@ -170,7 +197,8 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
         inputRateRUB: Double = 0,
         outputRateRUB: Double = 0,
         models: [ModelProfile]? = nil,
-        selectedModelID: UUID? = nil
+        selectedModelID: UUID? = nil,
+        credentialReferences: [ProviderCredentialReference] = []
     ) {
         self.id = id
         self.displayName = displayName
@@ -185,10 +213,15 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
         self.models = initialModels
         self.selectedModelID = selectedModelID.flatMap { id in initialModels.contains(where: { $0.id == id }) ? id : nil }
             ?? initialModels.first?.id
+        self.credentialReferences = credentialReferences
     }
 
     var selection: ProviderSelection { .custom(id) }
     var keychainAccount: String { "api-key.custom.\(id.uuidString.lowercased())" }
+
+    func additionalSecretAccount(referenceID: UUID) -> String {
+        "api-key.custom.\(id.uuidString.lowercased()).header.\(referenceID.uuidString.lowercased())"
+    }
 
     var selectedModel: ModelProfile? {
         get {
@@ -241,7 +274,7 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, displayName, baseURL, protocolKind, authScheme, models, selectedModelID
+        case id, displayName, baseURL, protocolKind, authScheme, models, selectedModelID, credentialReferences
         case modelName, inputRateRUB, outputRateRUB
     }
 
@@ -252,6 +285,7 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
         baseURL = try values.decode(String.self, forKey: .baseURL)
         protocolKind = try values.decode(CustomProviderProtocol.self, forKey: .protocolKind)
         authScheme = try values.decode(CustomAuthScheme.self, forKey: .authScheme)
+        credentialReferences = try values.decodeIfPresent([ProviderCredentialReference].self, forKey: .credentialReferences) ?? []
         if let decodedModels = try values.decodeIfPresent([ModelProfile].self, forKey: .models), !decodedModels.isEmpty {
             models = decodedModels
             let requested = try values.decodeIfPresent(UUID.self, forKey: .selectedModelID)
@@ -267,6 +301,19 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
             models = [model]
             selectedModelID = model.id
         }
+        var seenHeaders = Set<String>()
+        for reference in credentialReferences {
+            let expectedAccount = additionalSecretAccount(referenceID: reference.id)
+            let normalized = try CustomSecretHeaderPolicy.normalized(reference.headerName)
+            guard reference.keychainAccount == expectedAccount,
+                  seenHeaders.insert(normalized.lowercased()).inserted else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .credentialReferences,
+                    in: values,
+                    debugDescription: "Invalid or duplicate credential reference"
+                )
+            }
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -278,6 +325,7 @@ struct ProviderProfile: Codable, Equatable, Identifiable, Sendable {
         try values.encode(authScheme, forKey: .authScheme)
         try values.encode(models, forKey: .models)
         try values.encodeIfPresent(selectedModelID, forKey: .selectedModelID)
+        try values.encode(credentialReferences, forKey: .credentialReferences)
     }
 
 }

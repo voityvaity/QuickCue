@@ -88,6 +88,8 @@ final class AppSettingsTests: XCTestCase {
 
         let settings = AppSettings(defaults: defaults)
         XCTAssertEqual(settings.customProviders.map(\.id), [valid.id])
+        XCTAssertEqual(settings.corruptProviderProfileCount, 1)
+        XCTAssertNotNil(defaults.data(forKey: "settings.providerProfiles.recovery.v2"))
     }
 
     func testSeveralCustomProvidersRemainIndependent() {
@@ -171,6 +173,40 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(persisted.models.map(\.apiModelID), ["fast-model", "vision-model"])
         XCTAssertEqual(persisted.selectedModelID, vision.id)
         XCTAssertEqual(reopened.modelName(for: profile.selection), "vision-model")
+    }
+
+    func testForgedCredentialReferenceDoesNotDropValidSiblingOrExposeAnotherAccount() throws {
+        let suite = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let valid = CustomProviderProfile(displayName: "Valid", baseURL: "https://valid.example", modelName: "model")
+        var forged = CustomProviderProfile(displayName: "Forged", baseURL: "https://bad.example", modelName: "model")
+        forged.credentialReferences = [.init(id: UUID(), headerName: "X-Token", keychainAccount: ProviderKind.openAI.keychainAccount)]
+        let objects = try [valid, forged].map { profile in
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as? [String: Any])
+        }
+        defaults.set(try JSONSerialization.data(withJSONObject: objects), forKey: "settings.providerProfiles.v2")
+
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.customProviders.map(\.id), [valid.id])
+        XCTAssertNil(settings.customProvider(for: forged.selection))
+        XCTAssertEqual(settings.corruptProviderProfileCount, 1)
+        XCTAssertNotNil(defaults.data(forKey: "settings.providerProfiles.recovery.v2"))
+    }
+
+    func testAdditionalHeaderCredentialSnapshotIsBoundToProfileAccount() throws {
+        let secrets = MutableFixtureSecrets()
+        var profile = CustomProviderProfile(displayName: "Gateway", baseURL: "https://gateway.example", modelName: "model")
+        let referenceID = UUID()
+        let account = profile.additionalSecretAccount(referenceID: referenceID)
+        profile.credentialReferences = [.init(id: referenceID, headerName: "X-Tenant-Token", keychainAccount: account)]
+        try secrets.save("old-fixture", account: account)
+        let snapshot = ProviderRegistry.secretHeaders(for: profile, from: secrets, snapshot: true)
+        try secrets.save("new-fixture", account: account)
+        XCTAssertEqual(try snapshot(), ["X-Tenant-Token": "old-fixture"])
+
+        profile.credentialReferences[0].keychainAccount = "api-key.openAI"
+        XCTAssertThrowsError(try ProviderRegistry.secretHeaders(for: profile, from: secrets, snapshot: false)())
     }
 
     func testConnectionVerificationPersistsAndModelEditInvalidatesIt() {
