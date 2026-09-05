@@ -25,6 +25,7 @@ final class AppSettings: ObservableObject {
         static let answerTextSize = "settings.answerTextSize"
         static let highlightKeywords = "settings.highlightKeywords"
         static let hasSeenQuickTips = "settings.hasSeenQuickTips"
+        static let selectedContextProfileID = "settings.selectedContextProfileID"
         static let appearance = "settings.appearance"
         static let connectionReports = "settings.connectionReports.v1"
         static let customProviders = "settings.customProviders.v1"
@@ -70,6 +71,15 @@ final class AppSettings: ObservableObject {
     }
     @Published var hasSeenQuickTips: Bool {
         didSet { defaults.set(hasSeenQuickTips, forKey: Key.hasSeenQuickTips) }
+    }
+    @Published var selectedContextProfileID: UUID? {
+        didSet {
+            if let selectedContextProfileID {
+                defaults.set(selectedContextProfileID.uuidString, forKey: Key.selectedContextProfileID)
+            } else {
+                defaults.removeObject(forKey: Key.selectedContextProfileID)
+            }
+        }
     }
     @Published var appearance: AppAppearance { didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) } }
     @Published var listeningNavigationPolicy: ListeningNavigationPolicy {
@@ -146,6 +156,7 @@ final class AppSettings: ObservableObject {
         answerTextSize = AnswerTextSize(rawValue: defaults.string(forKey: Key.answerTextSize) ?? "") ?? .standard
         highlightKeywords = (defaults.object(forKey: Key.highlightKeywords) as? Bool) ?? false
         hasSeenQuickTips = (defaults.object(forKey: Key.hasSeenQuickTips) as? Bool) ?? false
+        selectedContextProfileID = defaults.string(forKey: Key.selectedContextProfileID).flatMap(UUID.init(uuidString:))
         appearance = AppAppearance(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .light
         listeningNavigationPolicy = ListeningNavigationPolicy(
             rawValue: defaults.string(forKey: Key.listeningNavigationPolicy) ?? ""

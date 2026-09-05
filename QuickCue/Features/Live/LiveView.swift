@@ -16,6 +16,7 @@ struct LiveView: View {
                         quickTips
                     }
                     dailyUsageSummary
+                    ContextStatusBadge()
                     if let session = store.currentSession {
                         sessionSummary(session)
                     }

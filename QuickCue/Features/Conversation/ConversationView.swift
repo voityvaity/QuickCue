@@ -16,6 +16,7 @@ struct ConversationView: View {
                 ScrollView {
                     LazyVStack(spacing: 14) {
                         statusHeader
+                        ContextStatusBadge()
 
                         if store.visibleConversationMessages.isEmpty {
                             emptyState

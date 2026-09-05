@@ -131,6 +131,23 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    NavigationLink {
+                        ContextProfilesView()
+                    } label: {
+                        LabeledContent {
+                            Text(settings.selectedContextProfileID == nil ? "Без контекста" : "Выбран")
+                                .foregroundStyle(.secondary)
+                        } label: {
+                            Label("Профили и вакансии", systemImage: "person.text.rectangle")
+                        }
+                    }
+                } header: {
+                    Text("Контекст интервью")
+                } footer: {
+                    Text("Резюме не обязательно. Выбранные локальные данные фиксируются для сессии и передаются вашему AI вместе с вопросом.")
+                }
+
                 Section("Расходы и лимиты") {
                     NavigationLink {
                         LimitsSettingsView()

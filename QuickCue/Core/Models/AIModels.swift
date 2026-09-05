@@ -421,6 +421,7 @@ struct AIRequest: Sendable {
     let imageJPEG: Data?
     let maxOutputTokens: Int
     let systemPrompt: String
+    let profileContext: String
 
     init(
         id: UUID = UUID(),
@@ -429,7 +430,8 @@ struct AIRequest: Sendable {
         mode: AnswerMode = .concise,
         imageJPEG: Data? = nil,
         maxOutputTokens: Int = 220,
-        systemPrompt: String = PromptFactory.defaultConciseSystem
+        systemPrompt: String = PromptFactory.defaultConciseSystem,
+        profileContext: String = ""
     ) {
         self.id = id
         self.question = question
@@ -438,6 +440,7 @@ struct AIRequest: Sendable {
         self.imageJPEG = imageJPEG
         self.maxOutputTokens = maxOutputTokens
         self.systemPrompt = systemPrompt
+        self.profileContext = profileContext
     }
 }
 

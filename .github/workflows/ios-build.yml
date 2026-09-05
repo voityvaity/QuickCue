@@ -136,7 +136,7 @@ jobs:
           pathlib.Path("TestResults/build-identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
           print(json.dumps(identity), flush=True)
           assert identity["CFBundleShortVersionString"] == "0.3.1", f"Unexpected version: {identity['CFBundleShortVersionString']!r}"
-          assert identity["CFBundleVersion"] == "4", f"Unexpected build: {identity['CFBundleVersion']!r}"
+          assert identity["CFBundleVersion"] == "5", f"Unexpected build: {identity['CFBundleVersion']!r}"
           assert identity["QuickCueSourceRevision"] == os.environ["GITHUB_SHA"], "Source revision missing or mismatched"
           PY
 

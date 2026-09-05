@@ -92,8 +92,10 @@ struct HistoryView: View {
     @Query private var transcripts: [TranscriptRecord]
     @Query private var usage: [UsageRecord]
     @Query private var conversationMessages: [ConversationMessageRecord]
+    @Query private var contextSnapshots: [SessionContextSnapshot]
     @State private var searchText = ""
     @State private var filter: HistoryFilter = .all
+    @State private var contextFilter = ""
     @State private var confirmDeleteAll = false
     @State private var sessionToDelete: SessionRecord?
     @State private var deletionError: String?
@@ -113,9 +115,16 @@ struct HistoryView: View {
             case .photo: matchesFilter = photos.contains { $0.sessionID == session.id }
             }
             guard matchesFilter else { return false }
+            if contextFilter == "__without_context__" {
+                guard session.contextTitle == nil else { return false }
+            } else if !contextFilter.isEmpty {
+                guard session.contextTitle == contextFilter else { return false }
+            }
             let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return true }
-            return session.title.localizedCaseInsensitiveContains(query) || entries.contains { entry in
+            return session.title.localizedCaseInsensitiveContains(query)
+                || session.contextTitle?.localizedCaseInsensitiveContains(query) == true
+                || entries.contains { entry in
                 if case .answer(let answer) = entry {
                     return entry.text.localizedCaseInsensitiveContains(query)
                         || answer.providerRaw.localizedCaseInsensitiveContains(query)
@@ -132,6 +141,10 @@ struct HistoryView: View {
             .sorted { $0.day > $1.day }
     }
 
+    private var contextTitles: [String] {
+        Array(Set(sessions.compactMap(\.contextTitle))).sorted()
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -140,6 +153,13 @@ struct HistoryView: View {
                 }
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
+                if !contextTitles.isEmpty {
+                    Picker("Контекст", selection: $contextFilter) {
+                        Text("Все контексты").tag("")
+                        Text("Без контекста").tag("__without_context__")
+                        ForEach(contextTitles, id: \.self) { Text($0).tag($0) }
+                    }
+                }
                 if days.isEmpty {
                     ContentUnavailableView("Ничего не найдено", systemImage: "clock", description: Text("Разговоры, ответы и фотографии появятся здесь."))
                 } else {
@@ -236,6 +256,7 @@ struct HistoryView: View {
             answers.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
             transcripts.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
             usage.filter { $0.sessionID.map(ids.contains) ?? false }.forEach { modelContext.delete($0) }
+            contextSnapshots.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
             sessions.filter { ids.contains($0.id) }.forEach { modelContext.delete($0) }
             try modelContext.save()
         } catch {
@@ -258,6 +279,7 @@ private struct SessionHistoryDetailView: View {
                 LabeledContent("Начало", value: session.startedAt.formatted())
                 LabeledContent("Вопросов", value: "\(session.questionCount)")
                 LabeledContent("Фотографий", value: "\(session.photoCount)")
+                LabeledContent("Контекст", value: session.contextTitle ?? "Без контекста")
                 LabeledContent("Оценка расходов", value: cost.title)
                 if let detail = cost.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
                 ShareLink(item: exportText) { Label("Экспортировать текст сессии", systemImage: "square.and.arrow.up") }
@@ -379,7 +401,7 @@ private struct AnswerHistoryDetailView: View {
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(answer.isFavorite ? .yellow : .secondary)
+                    .foregroundStyle(answer.isFavorite ? Color.yellow : Color.secondary)
                     .accessibilityLabel(answer.isFavorite ? "Убрать из избранного" : "Добавить в избранное")
                 }
                 if !answer.answer.isEmpty { Text(answer.answer).textSelection(.enabled) }

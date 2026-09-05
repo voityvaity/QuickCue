@@ -194,6 +194,73 @@ final class MigrationTests: XCTestCase {
         }
     }
 
+    func testVersionedV4StoreMigratesToV5AndContextModelsReopen() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV4.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            context.insert(QuickCueSchemaV4.SessionRecord(id: sessionID, title: "V4", provider: .mock))
+            context.insert(QuickCueSchemaV4.AnswerRecord(
+                sessionID: sessionID, question: "Старый вопрос", answer: "Старый ответ",
+                provider: .mock, modelName: "mock"
+            ))
+            try context.save()
+        }
+
+        var candidateID = UUID()
+        var jobID = UUID()
+        var snapshotID = UUID()
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(container)
+            let session = try XCTUnwrap(context.fetch(FetchDescriptor<SessionRecord>()).first)
+            let oldAnswer = try XCTUnwrap(context.fetch(FetchDescriptor<AnswerRecord>()).first)
+            XCTAssertEqual(session.id, sessionID)
+            XCTAssertNil(session.contextSnapshotID)
+            XCTAssertNil(oldAnswer.contextSnapshotID)
+
+            let candidate = CandidateProfile(title: "Кандидат")
+            let job = JobProfile(title: "Вакансия")
+            let profile = ContextProfile(title: "Контекст")
+            profile.candidateProfileID = candidate.id
+            profile.jobProfileID = job.id
+            let snapshot = SessionContextSnapshot(
+                sessionID: sessionID,
+                contextProfileID: profile.id,
+                contextProfileRevision: profile.revision,
+                title: profile.title,
+                text: "Снимок"
+            )
+            candidateID = candidate.id
+            jobID = job.id
+            snapshotID = snapshot.id
+            context.insert(candidate)
+            context.insert(job)
+            context.insert(profile)
+            context.insert(snapshot)
+            session.contextSnapshotID = snapshot.id
+            session.contextTitle = snapshot.title
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
+            let context = ModelContext(reopened)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<CandidateProfile>()).first?.id, candidateID)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<JobProfile>()).first?.id, jobID)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<SessionContextSnapshot>()).first?.id, snapshotID)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<SessionRecord>()).first?.contextSnapshotID, snapshotID)
+        }
+    }
+
     func testRecoveryPreservesCorruptStoreAndAllowsRetryWithoutReset() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

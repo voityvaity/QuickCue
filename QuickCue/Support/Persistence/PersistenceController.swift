@@ -34,7 +34,7 @@ final class PersistenceController: ObservableObject {
     }
 
     static func makeContainer(configuration: ModelConfiguration? = nil) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: QuickCueSchemaV4.self)
+        let schema = Schema(versionedSchema: QuickCueSchemaV5.self)
         if let configuration {
             return try ModelContainer(for: schema, migrationPlan: QuickCueMigrationPlan.self, configurations: [configuration])
         }

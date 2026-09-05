@@ -24,6 +24,8 @@ final class SessionStore: ObservableObject {
     @Published private(set) var pendingRequestCount = 0
     @Published private(set) var latestConfirmedTranscript: ConfirmedTranscript?
     @Published private(set) var conversationUpdateRevision = 0
+    @Published private(set) var activeContextTitle: String?
+    @Published private(set) var activeContextWasTruncated = false
     @Published var alertMessage: String?
 
     let speakerAttributionExplanation: String
@@ -58,6 +60,8 @@ final class SessionStore: ObservableObject {
     private var recentQuestions: [String: Date] = [:]
     private var recentTranscripts: [String: Date] = [:]
     private var turns: [ContextEntry] = []
+    private var activeContextText = ""
+    private var activeContextSnapshotID: UUID?
 
     /// Internal for deterministic context tests; never logged or exported automatically.
     var contextTurns: [ConversationTurn] { turns.map(\.turn) }
@@ -237,6 +241,17 @@ final class SessionStore: ObservableObject {
         visibleAnswers.removeAll()
         visibleConversationMessages.removeAll()
         latestConfirmedTranscript = nil
+        activeContextText = ""
+        activeContextSnapshotID = nil
+        activeContextTitle = nil
+        activeContextWasTruncated = false
+    }
+
+    /// Context changes form an explicit session boundary. Stored snapshots remain unchanged.
+    func activateContextProfile(_ id: UUID?) {
+        guard settings.selectedContextProfileID != id else { return }
+        if currentSession != nil { endSession() }
+        settings.selectedContextProfileID = id
     }
 
     func endConversation() {
@@ -403,6 +418,10 @@ final class SessionStore: ObservableObject {
 
     func reviseQuestion(_ value: String, for answer: AnswerRecord, answerAgain: Bool) {
         let text = detector.detect(value).normalizedText
+        guard !answer.isStale else {
+            alertMessage = "Эта карточка относится к прежней версии вопроса. Исправьте актуальный вопрос."
+            return
+        }
         guard isForeground, let session = currentSession, session.id == answer.sessionID,
               let transcriptID = answer.sourceTranscriptID,
               let transcript = (try? modelContext.fetch(FetchDescriptor<TranscriptRecord>()))?.first(where: {
@@ -559,6 +578,7 @@ final class SessionStore: ObservableObject {
         let title = Date.now.formatted(date: .abbreviated, time: .shortened)
         let session = SessionRecord(title: title, provider: provider)
         modelContext.insert(session)
+        captureContextSnapshot(for: session)
         currentSession = session
         scheduler.activate(sessionID: session.id)
         turns.removeAll()
@@ -787,6 +807,7 @@ final class SessionStore: ObservableObject {
         record.sourceMessageID = sourceMessageID
         record.questionRevision = max(1, questionRevision)
         record.parentAnswerID = parentAnswerID
+        record.contextSnapshotID = activeContextSnapshotID
         modelContext.insert(record)
         visibleAnswers.insert(record, at: 0)
         conversationMessage?.answerID = record.id
@@ -811,6 +832,53 @@ final class SessionStore: ObservableObject {
         try? modelContext.save()
     }
 
+    private func captureContextSnapshot(for session: SessionRecord) {
+        activeContextText = ""
+        activeContextSnapshotID = nil
+        activeContextTitle = nil
+        activeContextWasTruncated = false
+        guard let profileID = settings.selectedContextProfileID,
+              let profiles = try? modelContext.fetch(FetchDescriptor<ContextProfile>()),
+              let profile = profiles.first(where: { $0.id == profileID }) else { return }
+        let candidate = profile.candidateProfileID.flatMap { id in
+            (try? modelContext.fetch(FetchDescriptor<CandidateProfile>()))?.first { $0.id == id }
+        }
+        let job = profile.jobProfileID.flatMap { id in
+            (try? modelContext.fetch(FetchDescriptor<JobProfile>()))?.first { $0.id == id }
+        }
+        let selectedIDs = ContextSnapshotBuilder.selectedAttachmentIDs(from: profile)
+        let allAttachments = (try? modelContext.fetch(FetchDescriptor<AttachmentRecord>())) ?? []
+        let byID = Dictionary(uniqueKeysWithValues: allAttachments.map { ($0.id, $0) })
+        let attachments = selectedIDs.compactMap { byID[$0] }
+        let built = ContextSnapshotBuilder.build(
+            profile: profile,
+            candidate: candidate,
+            job: job,
+            attachments: attachments
+        )
+        let snapshot = SessionContextSnapshot(
+            sessionID: session.id,
+            contextProfileID: built.contextProfileID,
+            contextProfileRevision: built.contextProfileRevision,
+            title: built.title,
+            text: built.text
+        )
+        snapshot.candidateProfileID = built.candidateProfileID
+        snapshot.candidateRevision = built.candidateRevision
+        snapshot.jobProfileID = built.jobProfileID
+        snapshot.jobRevision = built.jobRevision
+        snapshot.attachmentRevisionsData = (try? JSONEncoder().encode(built.attachmentRevisions)) ?? Data("[]".utf8)
+        snapshot.wasTruncated = built.wasTruncated
+        snapshot.originalCharacterCount = built.originalCharacterCount
+        modelContext.insert(snapshot)
+        session.contextSnapshotID = snapshot.id
+        session.contextTitle = snapshot.title
+        activeContextText = snapshot.text
+        activeContextSnapshotID = snapshot.id
+        activeContextTitle = snapshot.title
+        activeContextWasTruncated = snapshot.wasTruncated
+    }
+
     private func ask(
         session: SessionRecord,
         record: AnswerRecord,
@@ -833,7 +901,8 @@ final class SessionStore: ObservableObject {
             context: contextTurns,
             mode: mode,
             imageJPEG: imageJPEG,
-            systemPrompt: systemPrompt
+            systemPrompt: systemPrompt,
+            profileContext: activeContextText
         )
         let clock = ContinuousClock()
         let started = clock.now

@@ -35,7 +35,7 @@ struct AnswerCardView: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(answer.isFavorite ? .yellow : .secondary)
+                .foregroundStyle(answer.isFavorite ? Color.yellow : Color.secondary)
                 .accessibilityLabel(answer.isFavorite ? "Убрать из избранного" : "Добавить в избранное")
                 statusView
             }
@@ -84,42 +84,7 @@ struct AnswerCardView: View {
                     .textSelection(.enabled)
                     .animation(.default, value: answer.answer)
 
-                HStack(spacing: 8) {
-                    if !isPhoto {
-                        actionButton("Короче", systemImage: "text.alignleft") {
-                            store.requestVariation(.concise, for: answer)
-                        }
-                        .disabled(!canUseAnswerAction)
-                        actionButton("Пример", systemImage: "lightbulb") {
-                            store.requestVariation(.example, for: answer)
-                        }
-                        .disabled(!canUseAnswerAction)
-                        actionButton("Исправить", systemImage: "pencil") {
-                            showQuestionEditor = true
-                        }
-                        .disabled(!canEditQuestion)
-                    }
-                    Menu {
-                        if !isPhoto {
-                            Button("Подробнее", systemImage: "list.bullet.rectangle") {
-                                store.requestVariation(.detailed, for: answer)
-                            }
-                            .disabled(!canUseAnswerAction)
-                            Button("Другой ответ", systemImage: "arrow.triangle.2.circlepath") {
-                                store.requestVariation(.alternative, for: answer)
-                            }
-                            .disabled(!canUseAnswerAction)
-                        }
-                        Button("Копировать", systemImage: "doc.on.doc") {
-                            UIPasteboard.general.string = answer.answer
-                        }
-                    } label: {
-                        Label("Ещё", systemImage: "ellipsis.circle")
-                            .font(.caption.weight(.medium))
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.bordered)
-                }
+                answerActions
 
                 HStack(spacing: 16) {
                     Button {
@@ -178,7 +143,8 @@ struct AnswerCardView: View {
     }
 
     private var canEditQuestion: Bool {
-        isCurrentSession && answer.sourceTranscriptID != nil && status == .completed && !answer.isStale
+        isCurrentSession && answer.sourceTranscriptID != nil && answer.parentAnswerID == nil
+            && status == .completed && !answer.isStale
     }
 
     private var displayedAnswer: Text {
@@ -193,6 +159,68 @@ struct AnswerCardView: View {
             }
             return partial + fragment
         }
+    }
+
+    @ViewBuilder
+    private var answerActions: some View {
+        if isPhoto {
+            moreMenu
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    conciseButton
+                    exampleButton
+                    correctionButton
+                    moreMenu
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) { conciseButton; exampleButton }
+                    HStack(spacing: 8) { correctionButton; moreMenu }
+                }
+            }
+        }
+    }
+
+    private var conciseButton: some View {
+        actionButton("Короче", systemImage: "text.alignleft") {
+            store.requestVariation(.concise, for: answer)
+        }
+        .disabled(!canUseAnswerAction)
+    }
+
+    private var exampleButton: some View {
+        actionButton("Пример", systemImage: "lightbulb") {
+            store.requestVariation(.example, for: answer)
+        }
+        .disabled(!canUseAnswerAction)
+    }
+
+    private var correctionButton: some View {
+        actionButton("Исправить", systemImage: "pencil") { showQuestionEditor = true }
+            .disabled(!canEditQuestion)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            if !isPhoto {
+                Button("Подробнее", systemImage: "list.bullet.rectangle") {
+                    store.requestVariation(.detailed, for: answer)
+                }
+                .disabled(!canUseAnswerAction)
+                Button("Другой ответ", systemImage: "arrow.triangle.2.circlepath") {
+                    store.requestVariation(.alternative, for: answer)
+                }
+                .disabled(!canUseAnswerAction)
+            }
+            Button("Копировать", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = answer.answer
+            }
+        } label: {
+            Label("Ещё", systemImage: "ellipsis.circle")
+                .font(.caption.weight(.medium))
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.bordered)
     }
 
     @ViewBuilder

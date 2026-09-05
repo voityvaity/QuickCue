@@ -22,8 +22,8 @@ except (OSError, ValueError, KeyError, TypeError):
     errors.append("PrivacyInfo.xcprivacy: invalid or missing manifest")
 
 project = (ROOT / "project.yml").read_text(encoding="utf-8")
-if not re.search(r"CURRENT_PROJECT_VERSION:\s*4\s", project):
-    errors.append("project.yml: expected build 4")
+if not re.search(r"CURRENT_PROJECT_VERSION:\s*5\s", project):
+    errors.append("project.yml: expected build 5")
 if not re.search(r"MARKETING_VERSION:\s*0\.3\.1\s", project):
     errors.append("project.yml: expected version 0.3.1")
 if not re.search(r'CFBundleShortVersionString:\s*["\']?\$\(MARKETING_VERSION\)["\']?\s', project):

@@ -236,11 +236,16 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(oldAnswer.isStale)
         XCTAssertEqual(fixture.store.contextTurns.last?.text, "Что такое actor?")
 
-        fixture.store.reviseQuestion("Что такое actor?", for: oldAnswer, answerAgain: true)
+        fixture.store.submitManualQuestion("Что такое isolation?")
         try await waitUntil { fixture.provider.requests.count == 2 }
+        fixture.provider.complete(try XCTUnwrap(fixture.provider.requests.last?.id), text: "Ещё ответ")
+        try await waitUntil { fixture.store.activeRequestCount == 0 }
+        let currentAnswer = try XCTUnwrap(fixture.store.visibleAnswers.first)
+        fixture.store.reviseQuestion("Что такое actor isolation?", for: currentAnswer, answerAgain: true)
+        try await waitUntil { fixture.provider.requests.count == 3 }
         let revised = try XCTUnwrap(fixture.store.visibleAnswers.first)
-        XCTAssertEqual(revised.question, "Что такое actor?")
-        XCTAssertEqual(revised.questionRevision, oldAnswer.questionRevision + 1)
+        XCTAssertEqual(revised.question, "Что такое actor isolation?")
+        XCTAssertEqual(revised.questionRevision, currentAnswer.questionRevision + 1)
         XCTAssertFalse(revised.isStale)
     }
 
@@ -289,6 +294,60 @@ final class SessionStoreTests: XCTestCase {
         let queuedRequest = try XCTUnwrap(fixture.provider.requests.first { $0.question == "Третий вопрос?" })
         XCTAssertTrue(queuedRequest.systemPrompt.contains("Снимок номер один"))
         XCTAssertFalse(queuedRequest.systemPrompt.contains("Снимок номер два"))
+    }
+
+    func testSessionContextSnapshotDoesNotChangeAfterProfileEdit() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        let candidate = CandidateProfile(title: "Кандидат")
+        candidate.skills = "Python"
+        let job = JobProfile(title: "Первая вакансия")
+        job.company = "Компания A"
+        let profile = ContextProfile(title: "Python · junior")
+        profile.candidateProfileID = candidate.id
+        profile.jobProfileID = job.id
+        fixture.context.insert(candidate)
+        fixture.context.insert(job)
+        fixture.context.insert(profile)
+        try fixture.context.save()
+        fixture.settings.selectedContextProfileID = profile.id
+
+        fixture.store.submitManualQuestion("Первый вопрос?")
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        let first = try XCTUnwrap(fixture.provider.requests.first)
+        XCTAssertTrue(first.profileContext.contains("Компания A"))
+        let firstSession = try XCTUnwrap(fixture.store.currentSession)
+        let firstSnapshotID = try XCTUnwrap(firstSession.contextSnapshotID)
+
+        job.company = "Компания B"
+        job.revision += 1
+        try fixture.context.save()
+        fixture.store.submitManualQuestion("Второй вопрос?")
+        try await waitUntil { fixture.provider.requests.count == 2 }
+        XCTAssertTrue(fixture.provider.requests.last?.profileContext.contains("Компания A") == true)
+        XCTAssertFalse(fixture.provider.requests.last?.profileContext.contains("Компания B") == true)
+        let savedSnapshot = try XCTUnwrap(
+            fixture.context.fetch(FetchDescriptor<SessionContextSnapshot>()).first { $0.id == firstSnapshotID }
+        )
+        XCTAssertTrue(savedSnapshot.text.contains("Компания A"))
+
+        fixture.store.endSession()
+        fixture.store.submitManualQuestion("Третий вопрос?")
+        try await waitUntil { fixture.provider.requests.count == 3 }
+        XCTAssertTrue(fixture.provider.requests.last?.profileContext.contains("Компания B") == true)
+        XCTAssertNotEqual(fixture.store.currentSession?.contextSnapshotID, firstSnapshotID)
+        XCTAssertTrue(savedSnapshot.text.contains("Компания A"))
+    }
+
+    func testNoProfileStillStartsAndSendsNoReferenceContext() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        XCTAssertNil(fixture.settings.selectedContextProfileID)
+        fixture.store.submitManualQuestion("Работает без резюме?")
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        XCTAssertEqual(fixture.provider.requests.first?.profileContext, "")
+        XCTAssertNil(fixture.store.currentSession?.contextSnapshotID)
+        XCTAssertNil(fixture.store.activeContextTitle)
     }
 
     func testPhotoRetryNeverSilentlyDropsTheImage() async throws {
