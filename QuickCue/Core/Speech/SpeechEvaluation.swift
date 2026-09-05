@@ -1,4 +1,5 @@
 import Combine
+import Darwin
 import Foundation
 import UIKit
 
@@ -164,6 +165,7 @@ final class SpeechBenchmarkRunner: ObservableObject {
     private var generation = UUID()
     private var lastCompletedText: String?
     private var lastCompletedAt: Date?
+    private var completedReportID: UUID?
 
     init(
         recognizer: (any SpeechRecognizing)? = nil,
@@ -220,6 +222,7 @@ final class SpeechBenchmarkRunner: ObservableObject {
         samples = []
         lastCompletedText = nil
         lastCompletedAt = nil
+        completedReportID = nil
         errorMessage = nil
     }
 
@@ -237,8 +240,9 @@ final class SpeechBenchmarkRunner: ObservableObject {
                normalized == lastCompletedText,
                let completedAt = lastCompletedAt,
                Date.now.timeIntervalSince(completedAt) < 1.5,
-               !samples.isEmpty {
+                !samples.isEmpty {
                 samples[samples.index(before: samples.endIndex)].duplicateEvents += 1
+                if currentIndex == SpeechEvaluationCatalog.cases.count { finishReport() }
             }
             return
         }
@@ -285,11 +289,13 @@ final class SpeechBenchmarkRunner: ObservableObject {
 
     private func finishReport() {
         let identity = BuildIdentity.current
+        let reportID = completedReportID ?? UUID()
+        completedReportID = reportID
         let report = SpeechEvaluationReport(
-            id: UUID(), createdAt: .now,
+            id: reportID, createdAt: .now,
             appVersion: identity.version, appBuild: identity.build, revision: identity.revision,
             operatingSystem: UIDevice.current.systemName + " " + UIDevice.current.systemVersion,
-            deviceFamily: UIDevice.current.model,
+            deviceFamily: "\(UIDevice.current.model) · \(SpeechDeviceIdentity.hardwareIdentifier)",
             engine: "SFSpeechRecognizer", locale: "ru_RU", condition: condition,
             samples: samples
         )
@@ -303,5 +309,16 @@ final class SpeechBenchmarkRunner: ObservableObject {
         endpointTask?.cancel()
         endpointTask = nil
         recognizer.stop()
+    }
+}
+
+private enum SpeechDeviceIdentity {
+    static var hardwareIdentifier: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        return Mirror(reflecting: systemInfo.machine).children.reduce(into: "") { result, element in
+            guard let value = element.value as? Int8, value != 0 else { return }
+            result.append(Character(UnicodeScalar(UInt8(value))))
+        }
     }
 }

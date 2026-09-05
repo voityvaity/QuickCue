@@ -55,6 +55,24 @@ final class SpeechEvaluationTests: XCTestCase {
         XCTAssertEqual(runner.currentIndex, 1)
     }
 
+    func testDuplicateAfterLastPhraseUpdatesTheSameSavedReport() {
+        let suite = "SpeechEvaluationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let recognizer = BenchmarkRecognizer()
+        let runner = SpeechBenchmarkRunner(recognizer: recognizer, defaults: defaults)
+
+        for item in SpeechEvaluationCatalog.cases {
+            runner.startCurrent()
+            recognizer.emit(item.phrase, isFinal: true)
+        }
+        let lastPhrase = SpeechEvaluationCatalog.cases.last!.phrase
+        recognizer.emit(lastPhrase, isFinal: true)
+
+        XCTAssertEqual(runner.savedReports.count, 1)
+        XCTAssertEqual(runner.savedReports.first?.samples.last?.duplicateEvents, 1)
+    }
+
     private func report(id: UUID, samples: [SpeechEvaluationSample]) -> SpeechEvaluationReport {
         SpeechEvaluationReport(
             id: id, createdAt: .now, appVersion: "test", appBuild: "1", revision: "fixture",
