@@ -209,7 +209,7 @@ struct ProviderMetadataClient: Sendable {
 
     init(
         transport: ProviderMetadataTransport = .init(),
-        now: @escaping @Sendable () -> Date = Date.init,
+        now: @escaping @Sendable () -> Date = { Date() },
         maxResponseBytes: Int = 262_144,
         maxModels: Int = 200,
         maxModelIDLength: Int = 160,
@@ -230,7 +230,7 @@ struct ProviderMetadataClient: Sendable {
     func metadata(
         for selection: ProviderSelection,
         customProfile: CustomProviderProfile? = nil,
-        credential: @escaping CredentialReader
+        credential: CredentialReader
     ) async throws -> MetadataResult {
         guard Self.supportsDiscovery(for: selection, customProfile: customProfile) else {
             return .unsupported
