@@ -362,6 +362,54 @@ final class MigrationTests: XCTestCase {
         }
     }
 
+    func testVersionedV7StoreMigratesThroughQuestionAndPracticeSchemas() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV7.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            context.insert(QuickCueSchemaV7.SessionRecord(id: sessionID, title: "V7", provider: .mock))
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(
+                configuration: ModelConfiguration(url: storeURL)
+            )
+            let context = ModelContext(container)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.SessionRecord>()).first?.id, sessionID)
+            try QuestionBankService.seedIfNeeded(in: context)
+            let question = try XCTUnwrap(context.fetch(FetchDescriptor<PracticeQuestionRecord>()).first)
+            let practice = PracticeSessionRecord(
+                mode: .quick,
+                interviewerRole: .engineer,
+                difficulty: .medium,
+                requestedRounds: 1,
+                maxDurationSeconds: 600,
+                questionIDs: [question.id]
+            )
+            context.insert(practice)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(
+                configuration: ModelConfiguration(url: storeURL)
+            )
+            let context = ModelContext(reopened)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<QuickCue.SessionRecord>()), 1)
+            XCTAssertGreaterThanOrEqual(try context.fetchCount(FetchDescriptor<PracticeQuestionRecord>()), 50)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<PracticeSessionRecord>()), 1)
+        }
+    }
+
     func testRecoveryPreservesCorruptStoreAndAllowsRetryWithoutReset() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -398,6 +446,41 @@ final class MigrationTests: XCTestCase {
         XCTAssertEqual(message.text, "Частичный ответ")
         XCTAssertNotNil(session.endedAt)
         XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.AnswerRecord>()).count, 1)
+    }
+
+    func testInterruptedPracticeIsClosedWithoutDeletingAcceptedAnswer() throws {
+        let container = try PersistenceController.makeContainer(
+            configuration: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = ModelContext(container)
+        let question = PracticeQuestionRecord(
+            text: "Вопрос?", topic: "Тема", role: .general,
+            difficulty: .basic, type: .technical,
+            provenance: .user, sourceLabel: "Тест"
+        )
+        context.insert(question)
+        let session = PracticeSessionRecord(
+            mode: .quick, interviewerRole: .engineer, difficulty: .basic,
+            requestedRounds: 1, maxDurationSeconds: 600, questionIDs: [question.id]
+        )
+        context.insert(session)
+        let turn = PracticeTurnRecord(sessionID: session.id, question: question, orderIndex: 0)
+        turn.answerText = "Принятый частичный ответ"
+        turn.statusRaw = PracticeTurnStatus.evaluating.rawValue
+        context.insert(turn)
+        let feedback = PracticeFeedbackRecord(
+            sessionID: session.id, turnID: turn.id, answerRevision: 1, requestID: UUID()
+        )
+        feedback.statusRaw = PracticeFeedbackStatus.streaming.rawValue
+        context.insert(feedback)
+        try context.save()
+
+        try PersistenceController.reconcileInterruptedWork(in: context)
+        XCTAssertEqual(session.statusRaw, PracticeSessionStatus.interrupted.rawValue)
+        XCTAssertNotNil(session.endedAt)
+        XCTAssertEqual(turn.statusRaw, PracticeTurnStatus.cancelled.rawValue)
+        XCTAssertEqual(turn.answerText, "Принятый частичный ответ")
+        XCTAssertEqual(feedback.statusRaw, PracticeFeedbackStatus.cancelled.rawValue)
     }
 
     func testApplicationStoreUsesTheSameContextAsSwiftUIHistory() throws {

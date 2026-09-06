@@ -7,6 +7,7 @@ struct AnswerCardView: View {
     @Bindable var answer: AnswerRecord
     @State private var showTechnicalDetails = false
     @State private var showQuestionEditor = false
+    @State private var showSaveToBank = false
 
     private var status: AnswerStatus {
         AnswerStatus(rawValue: answer.statusRaw) ?? .completed
@@ -145,6 +146,15 @@ struct AnswerCardView: View {
             QuestionCorrectionView(answer: answer)
                 .environmentObject(store)
         }
+        .sheet(isPresented: $showSaveToBank) {
+            NavigationStack {
+                CustomQuestionEditor(
+                    prefilledText: answer.question,
+                    provenance: .history,
+                    sourceLabel: "История QuickCue"
+                )
+            }
+        }
     }
 
     private var canUseAnswerAction: Bool {
@@ -212,6 +222,9 @@ struct AnswerCardView: View {
     private var moreMenu: some View {
         Menu {
             if !isPhoto {
+                Button("Сохранить вопрос для практики", systemImage: "books.vertical") {
+                    showSaveToBank = true
+                }
                 Button("Подробнее", systemImage: "list.bullet.rectangle") {
                     store.requestVariation(.detailed, for: answer)
                 }

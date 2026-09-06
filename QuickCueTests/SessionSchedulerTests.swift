@@ -170,6 +170,33 @@ final class SessionSchedulerTests: XCTestCase {
         await answer.wait()
     }
 
+    func testPracticeUsesSharedLimitAndOwnerCancellationCannotTouchLiveAnswer() async {
+        let scheduler = RequestScheduler(maximumConcurrentRequests: 1)
+        let session = UUID()
+        let practiceID = UUID()
+        let gate = SchedulerTestGate()
+        scheduler.activate(sessionID: session)
+        var practiceStarted = false
+        var practiceCancelled = false
+        let answer = scheduler.enqueue(sessionID: session) { await gate.wait() }
+        let practice = scheduler.enqueuePractice(
+            practiceID: practiceID,
+            operation: { practiceStarted = true },
+            onCancel: { practiceCancelled = true }
+        )
+        await Task.yield()
+        XCTAssertEqual(scheduler.activeCount, 1)
+        XCTAssertEqual(scheduler.pendingCount, 1)
+
+        scheduler.cancel(owner: .practice(practiceID))
+        await practice.wait()
+        XCTAssertTrue(practiceCancelled)
+        XCTAssertFalse(practiceStarted)
+        XCTAssertEqual(scheduler.activeCount, 1)
+        gate.release()
+        await answer.wait()
+    }
+
     func testInactiveStyleCancelAllCancelsSetupAndSessionOwners() async {
         let scheduler = RequestScheduler(maximumConcurrentRequests: 1)
         let session = UUID()

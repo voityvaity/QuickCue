@@ -104,6 +104,21 @@ struct PreparationHomeView: View {
 
             Section {
                 NavigationLink {
+                    QuestionBankView()
+                } label: {
+                    Label("Банк вопросов и практика", systemImage: "books.vertical")
+                }
+                NavigationLink {
+                    FullInterviewSetupView()
+                } label: {
+                    Label("Полное тренировочное интервью", systemImage: "person.2.wave.2")
+                }
+                NavigationLink {
+                    PracticeHistoryView()
+                } label: {
+                    Label("История практики и прогресс", systemImage: "chart.line.uptrend.xyaxis")
+                }
+                NavigationLink {
                     PreflightView()
                 } label: {
                     Label("Проверить готовность перед интервью", systemImage: "checkmark.circle")

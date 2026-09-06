@@ -35,6 +35,10 @@ typealias JobProfile = QuickCueSchemaV7.JobProfile
 typealias AttachmentRecord = QuickCueSchemaV7.AttachmentRecord
 typealias ContextProfile = QuickCueSchemaV7.ContextProfile
 typealias SessionContextSnapshot = QuickCueSchemaV7.SessionContextSnapshot
+typealias PracticeQuestionRecord = QuickCueSchemaV8.PracticeQuestionRecord
+typealias PracticeSessionRecord = QuickCueSchemaV9.PracticeSessionRecord
+typealias PracticeTurnRecord = QuickCueSchemaV9.PracticeTurnRecord
+typealias PracticeFeedbackRecord = QuickCueSchemaV9.PracticeFeedbackRecord
 
 enum QuickCueSchemaV2: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
@@ -221,7 +225,7 @@ enum QuickCueSchemaV2: VersionedSchema {
 
 enum QuickCueMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [QuickCueSchemaV1.self, QuickCueSchemaV2.self, QuickCueSchemaV3.self, QuickCueSchemaV4.self, QuickCueSchemaV5.self, QuickCueSchemaV6.self, QuickCueSchemaV7.self]
+        [QuickCueSchemaV1.self, QuickCueSchemaV2.self, QuickCueSchemaV3.self, QuickCueSchemaV4.self, QuickCueSchemaV5.self, QuickCueSchemaV6.self, QuickCueSchemaV7.self, QuickCueSchemaV8.self, QuickCueSchemaV9.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -231,6 +235,8 @@ enum QuickCueMigrationPlan: SchemaMigrationPlan {
             .lightweight(fromVersion: QuickCueSchemaV4.self, toVersion: QuickCueSchemaV5.self),
             .lightweight(fromVersion: QuickCueSchemaV5.self, toVersion: QuickCueSchemaV6.self),
             .lightweight(fromVersion: QuickCueSchemaV6.self, toVersion: QuickCueSchemaV7.self),
+            .lightweight(fromVersion: QuickCueSchemaV7.self, toVersion: QuickCueSchemaV8.self),
+            .lightweight(fromVersion: QuickCueSchemaV8.self, toVersion: QuickCueSchemaV9.self),
         ]
     }
 }

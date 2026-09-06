@@ -29,6 +29,9 @@ struct MockAIProvider: AIProvider {
     }
 
     private func mockChunks(for request: AIRequest) -> [String] {
+        if request.systemPrompt.contains(PracticePrompt.marker) {
+            return practiceChunks(for: request)
+        }
         if request.mode == .photo {
             return [
                 "• Mock распознал режим фото-задачи.\n",
@@ -41,5 +44,35 @@ struct MockAIProvider: AIProvider {
             "• Потоковый ответ появляется фрагментами без реального API-ключа.\n",
             "• В настройках можно выбрать подключаемого провайдера и latency fallback."
         ]
+    }
+
+    private func practiceChunks(for request: AIRequest) -> [String] {
+        let answer = extract(tag: "user_answer", from: request.question)
+        let evidence = String((answer.split(separator: "\n").first.map(String.init) ?? answer).prefix(140))
+        let wantsFollowUp = request.question.contains("Предложи одно короткое уместное уточнение")
+        let followUpValue: Any = wantsFollowUp
+            ? "Какой конкретный пример подтверждает ваш ответ?"
+            : NSNull()
+        let object: [String: Any] = [
+            "evidence": evidence,
+            "strengths": ["Ответ относится к заданному вопросу.", "Основная мысль сформулирована явно."],
+            "improvements": ["Добавьте один конкретный пример и обозначьте важное ограничение."],
+            "exampleAnswer": "Сначала дам прямой тезис, затем короткий пример и назову ограничение решения.",
+            "followUpQuestion": followUpValue,
+            "scores": ["accuracy": 4, "completeness": 3, "structure": 4, "examples": 2],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+            return ["{\"improvements\":[\"Mock-разбор недоступен\"]}"]
+        }
+        let first = text.index(text.startIndex, offsetBy: text.count / 3)
+        let second = text.index(first, offsetBy: text.count / 3)
+        return [String(text[..<first]), String(text[first..<second]), String(text[second...])]
+    }
+
+    private func extract(tag: String, from text: String) -> String {
+        guard let start = text.range(of: "<\(tag)>")?.upperBound,
+              let end = text.range(of: "</\(tag)>", range: start..<text.endIndex)?.lowerBound else { return "Ответ пользователя" }
+        return String(text[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

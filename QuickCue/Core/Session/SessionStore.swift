@@ -202,6 +202,10 @@ final class SessionStore: ObservableObject {
 
     func cancelPreparation(_ id: UUID) { scheduler.cancel(id) }
 
+    func cancelPracticeRequest(_ id: UUID) { scheduler.cancel(id) }
+
+    func cancelPracticeSession(_ id: UUID) { scheduler.cancel(owner: .practice(id)) }
+
     /// Explicit preparation work shares the same bounded request gate but does
     /// not create or borrow a Live session.
     func generatePreparationPlan(
@@ -315,6 +319,128 @@ final class SessionStore: ObservableObject {
             return try result.get()
         } onCancel: {
             Task { @MainActor [weak self] in self?.scheduler.cancel(planID) }
+        }
+    }
+
+    /// Practice evaluation has its own owner, but uses the same bounded router,
+    /// cancellation and usage ledger as Live and preparation requests.
+    func generatePracticeFeedback(
+        _ input: PracticeEvaluationRequest,
+        onDelta: @escaping @MainActor (String) -> Void
+    ) async throws -> PracticeGenerationResult {
+        guard isForeground else { throw CancellationError() }
+        let registry = ProviderRegistry(settings: settings)
+        let primary = providerFactory?(settings.primaryProvider)
+            ?? registry.provider(settings.primaryProvider, snapshotCredentials: true)
+        let fallback: (any AIProvider)? = if settings.mockMode || !settings.latencyFallbackEnabled {
+            nil
+        } else {
+            providerFactory?(settings.fallbackProvider)
+                ?? registry.provider(settings.fallbackProvider, snapshotCredentials: true)
+        }
+        let request = AIRequest(
+            id: input.requestID,
+            question: PracticePrompt.userText(
+                question: input.question,
+                answer: input.answer,
+                type: input.type,
+                allowFollowUp: input.allowFollowUp,
+                exampleStyle: input.exampleStyle,
+                job: input.jobSnapshot
+            ),
+            context: [],
+            maxOutputTokens: 900,
+            systemPrompt: PracticePrompt.system
+        )
+        let resultBox = PracticeGenerationBox()
+        let ticket = scheduler.enqueuePractice(
+            id: input.requestID,
+            practiceID: input.practiceSessionID
+        ) { [weak self] in
+            guard let self else {
+                resultBox.result = .failure(CancellationError())
+                return
+            }
+            var text = ""
+            var completed = false
+            var winner = primary.selection
+            do {
+                for try await (selection, event) in router.stream(
+                    request: request,
+                    primary: primary,
+                    fallback: fallback,
+                    fallbackDelaySeconds: settings.fallbackDelaySeconds,
+                    onAttemptFinished: { attempt in
+                        await MainActor.run {
+                            let row = self.ledger.recordAttempt(
+                                attempt,
+                                sessionID: nil,
+                                requestKind: "practice_feedback",
+                                settings: self.settings
+                            )
+                            let finish: DiagnosticFinishCategory = switch attempt.outcome {
+                            case .succeeded: .complete
+                            case .failed: .failed
+                            case .cancelled: .cancelled
+                            }
+                            let usageProvenance: DiagnosticUsageProvenance = switch row.usageSourceRaw {
+                            case "reported": .reported
+                            case "estimated": .estimated
+                            default: row.costSourceRaw == "free_mock" ? .freeMock : .unknown
+                            }
+                            self.diagnostics.record(.attempt(
+                                sessionID: nil,
+                                requestID: attempt.requestID,
+                                provider: attempt.selection,
+                                durationMilliseconds: attempt.durationMilliseconds,
+                                finish: finish,
+                                errorCode: attempt.errorCode,
+                                usageProvenance: usageProvenance,
+                                inputTokens: row.usageSourceRaw == "unknown" ? nil : row.inputTokens,
+                                outputTokens: row.usageSourceRaw == "unknown" ? nil : row.outputTokens,
+                                knownCostRUB: ["calculated", "free_mock"].contains(row.costSourceRaw ?? "")
+                                    ? row.estimatedCostRUB : nil
+                            ))
+                        }
+                    }
+                ) {
+                    try Task.checkCancellation()
+                    winner = selection
+                    switch event {
+                    case .textDelta(let delta):
+                        text += delta
+                        onDelta(text)
+                    case .usage:
+                        break
+                    case .completed:
+                        completed = true
+                    }
+                }
+                try Task.checkCancellation()
+                guard completed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw text.isEmpty ? AIProviderError.emptyResponse : AIProviderError.incompleteResponse
+                }
+                let model = winner == primary.selection ? primary.modelName : (fallback?.modelName ?? primary.modelName)
+                resultBox.result = .success(.init(
+                    text: text,
+                    provider: winner,
+                    modelName: model,
+                    promptVersion: PracticePrompt.version
+                ))
+            } catch {
+                resultBox.result = .failure(Task.isCancelled ? CancellationError() : error)
+            }
+        } onCancel: {
+            if resultBox.result == nil { resultBox.result = .failure(CancellationError()) }
+        }
+
+        return try await withTaskCancellationHandler {
+            await ticket.wait()
+            try Task.checkCancellation()
+            guard let result = resultBox.result else { throw CancellationError() }
+            return try result.get()
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.scheduler.cancel(input.requestID) }
         }
     }
 
@@ -1427,6 +1553,11 @@ private final class SetupVerificationBox {
 @MainActor
 private final class PreparationGenerationBox {
     var result: Result<PreparationGenerationResult, Error>?
+}
+
+@MainActor
+private final class PracticeGenerationBox {
+    var result: Result<PracticeGenerationResult, Error>?
 }
 
 private extension Duration {

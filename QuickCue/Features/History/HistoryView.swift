@@ -389,6 +389,7 @@ private struct AnswerHistoryDetailView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var store: SessionStore
     @Bindable var answer: AnswerRecord
+    @State private var showSaveToBank = false
 
     var body: some View {
         ScrollView {
@@ -405,6 +406,11 @@ private struct AnswerHistoryDetailView: View {
                     .accessibilityLabel(answer.isFavorite ? "Убрать из избранного" : "Добавить в избранное")
                 }
                 if !answer.answer.isEmpty { Text(answer.answer).textSelection(.enabled) }
+                if answer.requestKindRaw != AnswerMode.photo.rawValue {
+                    Button { showSaveToBank = true } label: {
+                        Label("Сохранить вопрос для практики", systemImage: "books.vertical")
+                    }
+                }
                 if answer.statusRaw == AnswerStatus.failed.rawValue || answer.statusRaw == AnswerStatus.cancelled.rawValue {
                     Label(answer.errorMessage ?? "Ответ прерван", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
@@ -418,5 +424,14 @@ private struct AnswerHistoryDetailView: View {
         }
         .navigationTitle("Ответ")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showSaveToBank) {
+            NavigationStack {
+                CustomQuestionEditor(
+                    prefilledText: answer.question,
+                    provenance: .history,
+                    sourceLabel: "История QuickCue"
+                )
+            }
+        }
     }
 }

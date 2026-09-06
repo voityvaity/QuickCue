@@ -44,7 +44,7 @@ final class PersistenceController: ObservableObject {
     }
 
     static func makeContainer(configuration: ModelConfiguration? = nil) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: QuickCueSchemaV7.self)
+        let schema = Schema(versionedSchema: QuickCueSchemaV9.self)
         if let configuration {
             return try ModelContainer(for: schema, migrationPlan: QuickCueMigrationPlan.self, configurations: [configuration])
         }
@@ -63,6 +63,29 @@ final class PersistenceController: ObservableObject {
         // An unclosed session belongs to the previous process; never resume its network work automatically.
         for session in try context.fetch(FetchDescriptor<SessionRecord>()) where session.endedAt == nil {
             session.endedAt = .now
+        }
+        for session in try context.fetch(FetchDescriptor<PracticeSessionRecord>())
+        where session.endedAt == nil || session.statusRaw == PracticeSessionStatus.active.rawValue {
+            session.statusRaw = PracticeSessionStatus.interrupted.rawValue
+            session.endedAt = session.endedAt ?? .now
+            session.updatedAt = .now
+        }
+        let activePracticeTurns = Set([
+            PracticeTurnStatus.asking.rawValue,
+            PracticeTurnStatus.listening.rawValue,
+            PracticeTurnStatus.evaluating.rawValue,
+        ])
+        for turn in try context.fetch(FetchDescriptor<PracticeTurnRecord>())
+        where activePracticeTurns.contains(turn.statusRaw) {
+            turn.statusRaw = PracticeTurnStatus.cancelled.rawValue
+        }
+        let activePracticeFeedback = Set([
+            PracticeFeedbackStatus.queued.rawValue,
+            PracticeFeedbackStatus.streaming.rawValue,
+        ])
+        for feedback in try context.fetch(FetchDescriptor<PracticeFeedbackRecord>())
+        where activePracticeFeedback.contains(feedback.statusRaw) {
+            feedback.statusRaw = PracticeFeedbackStatus.cancelled.rawValue
         }
         try context.save()
     }

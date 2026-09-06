@@ -579,6 +579,43 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(usage.first?.requestID, planID)
     }
 
+    func testPracticeFeedbackUsesSharedProviderPathAndNoLiveConversation() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        let practiceID = UUID()
+        let requestID = UUID()
+        let input = PracticeEvaluationRequest(
+            requestID: requestID,
+            practiceSessionID: practiceID,
+            turnID: UUID(),
+            question: "Что такое декоратор?",
+            answer: "Декоратор оборачивает функцию",
+            type: .technical,
+            allowFollowUp: true,
+            exampleStyle: .standard,
+            jobSnapshot: nil
+        )
+
+        let task = Task {
+            try await fixture.store.generatePracticeFeedback(input) { _ in }
+        }
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        XCTAssertNil(fixture.store.currentSession)
+        XCTAssertEqual(fixture.provider.requests.first?.id, requestID)
+        XCTAssertTrue(fixture.provider.requests.first?.systemPrompt.contains(PracticePrompt.marker) == true)
+        XCTAssertTrue(fixture.provider.requests.first?.question.contains("Декоратор оборачивает функцию") == true)
+        fixture.provider.complete(requestID, text: "{\"evidence\":\"Декоратор\",\"strengths\":[\"По теме\"],\"improvements\":[],\"exampleAnswer\":\"Пример\",\"followUpQuestion\":null,\"scores\":{}}")
+        let result = try await task.value
+        XCTAssertEqual(result.provider, .builtIn(.mock))
+
+        XCTAssertTrue(try fixture.context.fetch(FetchDescriptor<SessionRecord>()).isEmpty)
+        let usage = try fixture.context.fetch(FetchDescriptor<UsageRecord>())
+        XCTAssertEqual(usage.count, 1)
+        XCTAssertNil(usage.first?.sessionID)
+        XCTAssertEqual(usage.first?.requestKind, "practice_feedback")
+        XCTAssertEqual(usage.first?.requestID, requestID)
+    }
+
     private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
         let deadline = Date.now.addingTimeInterval(3)
         while !condition() {
