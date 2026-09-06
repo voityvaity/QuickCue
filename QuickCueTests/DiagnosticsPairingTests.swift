@@ -11,12 +11,13 @@ final class DiagnosticsPairingTests: XCTestCase {
             code(
                 host: "192.168.1.5",
                 expiresAt: now.addingTimeInterval(600),
-                publicKey: privateKey.publicKey.rawRepresentation
+                publicKey: privateKey.publicKey.x963Representation
             ),
             now: now
         )
         XCTAssertEqual(invitation.host, "192.168.1.5")
-        XCTAssertEqual(invitation.publicKey, privateKey.publicKey.rawRepresentation.base64URLEncodedString())
+        XCTAssertEqual(invitation.publicKey, privateKey.publicKey.x963Representation.base64URLEncodedString())
+        XCTAssertEqual(try XCTUnwrap(Data(base64URL: invitation.publicKey)).count, 65)
     }
 
     func testInvitationRejectsPublicHostAndExpiredCode() throws {
@@ -25,21 +26,21 @@ final class DiagnosticsPairingTests: XCTestCase {
         XCTAssertThrowsError(try DiagnosticsPairingInvitation.parse(
             code(
                 host: "example.com", expiresAt: now.addingTimeInterval(600),
-                publicKey: privateKey.publicKey.rawRepresentation
+                publicKey: privateKey.publicKey.x963Representation
             ),
             now: now
         ))
         XCTAssertThrowsError(try DiagnosticsPairingInvitation.parse(
             code(
                 host: "127.0.0.1", expiresAt: now.addingTimeInterval(600),
-                publicKey: privateKey.publicKey.rawRepresentation
+                publicKey: privateKey.publicKey.x963Representation
             ),
             now: now
         ))
         XCTAssertThrowsError(try DiagnosticsPairingInvitation.parse(
             code(
                 host: "192.168.1.5", expiresAt: now.addingTimeInterval(-1),
-                publicKey: privateKey.publicKey.rawRepresentation
+                publicKey: privateKey.publicKey.x963Representation
             ),
             now: now
         ))
@@ -58,13 +59,13 @@ final class DiagnosticsPairingTests: XCTestCase {
             payload,
             kind: .pair,
             receiverID: receiverID,
-            receiverPublicKey: receiver.publicKey.rawRepresentation.base64URLEncodedString()
+            receiverPublicKey: receiver.publicKey.x963Representation.base64URLEncodedString()
         )
         XCTAssertFalse(String(decoding: packetData, as: UTF8.self).contains(payload.deliverySecret))
         let packet = try JSONDecoder().decode(SealedDiagnosticPacket.self, from: packetData)
-        let ephemeral = try P256.KeyAgreement.PublicKey(
-            rawRepresentation: try XCTUnwrap(Data(base64URL: packet.ephemeralPublicKey))
-        )
+        let ephemeralBytes = try XCTUnwrap(Data(base64URL: packet.ephemeralPublicKey))
+        XCTAssertEqual(ephemeralBytes.count, 65)
+        let ephemeral = try P256.KeyAgreement.PublicKey(x963Representation: ephemeralBytes)
         let shared = try receiver.sharedSecretFromKeyAgreement(with: ephemeral)
         let key = shared.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -110,7 +111,7 @@ final class DiagnosticsPairingTests: XCTestCase {
             receiverID: receiverID,
             host: "192.168.1.5",
             expiresAt: now.addingTimeInterval(600),
-            publicKey: receiver.publicKey.rawRepresentation
+            publicKey: receiver.publicKey.x963Representation
         ))
         XCTAssertNotNil(settings.diagnosticsPairingProfile)
         XCTAssertFalse(settings.automaticDiagnosticsDeliveryEnabled)
@@ -196,7 +197,7 @@ final class DiagnosticsPairingTests: XCTestCase {
             try await controller.pair(using: code(
                 receiverID: receiverID, host: "192.168.1.5",
                 expiresAt: now.addingTimeInterval(600),
-                publicKey: receiver.publicKey.rawRepresentation
+                publicKey: receiver.publicKey.x963Representation
             ))
         }
         try await waitUntil { await transport.calls == 1 }
@@ -247,7 +248,7 @@ final class DiagnosticsPairingTests: XCTestCase {
                 receiverID: receiverID,
                 host: "192.168.1.5",
                 expiresAt: now.addingTimeInterval(600),
-                publicKey: receiver.publicKey.rawRepresentation
+                publicKey: receiver.publicKey.x963Representation
             )
         )
     }
@@ -366,7 +367,7 @@ private actor PairingAckTransport: DiagnosticPacketTransport {
 
     private func open(_ packet: SealedDiagnosticPacket) throws -> Data {
         let ephemeral = try P256.KeyAgreement.PublicKey(
-            rawRepresentation: try XCTUnwrap(Data(base64URL: packet.ephemeralPublicKey))
+            x963Representation: try XCTUnwrap(Data(base64URL: packet.ephemeralPublicKey))
         )
         let shared = try receiverPrivateKey.sharedSecretFromKeyAgreement(with: ephemeral)
         let key = shared.hkdfDerivedSymmetricKey(

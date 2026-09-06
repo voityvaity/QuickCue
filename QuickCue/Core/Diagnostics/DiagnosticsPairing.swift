@@ -130,7 +130,7 @@ enum DiagnosticEnvelopeCrypto {
         guard let publicBytes = Data(base64URL: receiverPublicKey) else {
             throw DiagnosticsPairingError.encryption
         }
-        let receiverKey = try P256.KeyAgreement.PublicKey(rawRepresentation: publicBytes)
+        let receiverKey = try P256.KeyAgreement.PublicKey(x963Representation: publicBytes)
         let ephemeral = P256.KeyAgreement.PrivateKey()
         let shared = try ephemeral.sharedSecretFromKeyAgreement(with: receiverKey)
         let key = shared.hkdfDerivedSymmetricKey(
@@ -149,7 +149,7 @@ enum DiagnosticEnvelopeCrypto {
             schemaVersion: 1,
             kind: kind,
             receiverID: receiverID,
-            ephemeralPublicKey: ephemeral.publicKey.rawRepresentation.base64URLEncodedString(),
+            ephemeralPublicKey: ephemeral.publicKey.x963Representation.base64URLEncodedString(),
             sealedPayload: combined.base64URLEncodedString()
         )
         let data = try encoder.encode(packet)
