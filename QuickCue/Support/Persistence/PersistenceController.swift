@@ -8,10 +8,16 @@ final class PersistenceController: ObservableObject {
     @Published private(set) var failedToOpen = false
     private let settings: AppSettings
     private let configuration: ModelConfiguration?
+    private let onSessionEnded: @MainActor () -> Void
 
-    init(settings: AppSettings, configuration: ModelConfiguration? = nil) {
+    init(
+        settings: AppSettings,
+        configuration: ModelConfiguration? = nil,
+        onSessionEnded: @escaping @MainActor () -> Void = {}
+    ) {
         self.settings = settings
         self.configuration = configuration
+        self.onSessionEnded = onSessionEnded
         open()
     }
 
@@ -24,7 +30,11 @@ final class PersistenceController: ObservableObject {
             // publication guards observe the same model instances immediately.
             let context = container.mainContext
             try Self.reconcileInterruptedWork(in: context)
-            self.sessionStore = SessionStore(modelContext: context, settings: settings)
+            self.sessionStore = SessionStore(
+                modelContext: context,
+                settings: settings,
+                onSessionEnded: onSessionEnded
+            )
             self.container = container
             self.failedToOpen = false
         } catch {

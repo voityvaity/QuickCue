@@ -42,6 +42,22 @@ struct LiveView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("QuickCue")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        PreflightView()
+                    } label: {
+                        Image(systemName: "checkmark.circle")
+                    }
+                    .accessibilityLabel("Проверить готовность")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        PreparationHomeView()
+                    } label: {
+                        Image(systemName: "list.clipboard")
+                    }
+                    .accessibilityLabel("Подготовка к вакансии")
+                }
                 if store.currentSession != nil {
                     Button("Завершить") { store.endSession() }
                 }

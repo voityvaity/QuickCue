@@ -142,6 +142,34 @@ final class SessionSchedulerTests: XCTestCase {
         XCTAssertEqual(scheduler.activeCount, 0)
     }
 
+    func testPreparationUsesTheSameConcurrencyGateAndCanBeCancelledByOwner() async {
+        let scheduler = RequestScheduler(maximumConcurrentRequests: 1)
+        let session = UUID()
+        let preparationID = UUID()
+        let gate = SchedulerTestGate()
+        scheduler.activate(sessionID: session)
+        var preparationStarted = false
+        var preparationCancelled = false
+        let answer = scheduler.enqueue(sessionID: session) { await gate.wait() }
+        let preparation = scheduler.enqueuePreparation(
+            preparationID: preparationID,
+            operation: { preparationStarted = true },
+            onCancel: { preparationCancelled = true }
+        )
+        await Task.yield()
+        XCTAssertEqual(scheduler.activeCount, 1)
+        XCTAssertEqual(scheduler.pendingCount, 1)
+
+        scheduler.cancel(owner: .preparation(preparationID))
+        await preparation.wait()
+        XCTAssertTrue(preparationCancelled)
+        XCTAssertFalse(preparationStarted)
+        XCTAssertEqual(scheduler.activeCount, 1)
+        XCTAssertEqual(scheduler.pendingCount, 0)
+        gate.release()
+        await answer.wait()
+    }
+
     func testInactiveStyleCancelAllCancelsSetupAndSessionOwners() async {
         let scheduler = RequestScheduler(maximumConcurrentRequests: 1)
         let session = UUID()

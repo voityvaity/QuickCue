@@ -304,6 +304,7 @@ struct CameraModeView: View {
                 try checkActive(operation: operation, sessionID: sessionID)
                 let jpeg = try await camera.capture()
                 try checkActive(operation: operation, sessionID: sessionID)
+                DiagnosticsRecorder.shared.record(.cameraCaptured(sessionID: sessionID))
                 completionCounter += 1
                 let text = try await textRecognizer.recognize(jpeg: jpeg)
                 try checkActive(operation: operation, sessionID: sessionID)
@@ -342,8 +343,9 @@ struct CameraModeView: View {
             }
             try modelContext.save()
             let answer = await store.answerPhoto(
-                jpeg: upload, recognizedText: text, photoRelativePath: photo.relativePath,
+                jpeg: upload, recognizedText: text,
                 includeInConversation: includeInConversation,
+                photoRelativePath: photo.relativePath,
                 expectedSessionID: sessionID,
                 retainForSession: retainForSession
             )

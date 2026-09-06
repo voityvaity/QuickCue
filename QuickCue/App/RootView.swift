@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var diagnosticsDelivery: DiagnosticsDeliveryController
     @Environment(\.scenePhase) private var scenePhase
     @State private var navigation = TabNavigationCoordinator()
 
@@ -62,8 +63,13 @@ struct RootView: View {
             Text("Перейти в «\(navigation.pendingTab?.title ?? "другую вкладку")» и продолжить распознавание или остановить микрофон?")
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { store.handleSceneBecameActive() }
-            else { store.handleSceneBecameInactive() }
+            if phase == .active {
+                store.handleSceneBecameActive()
+                diagnosticsDelivery.appBecameActive()
+            } else {
+                store.handleSceneBecameInactive()
+                diagnosticsDelivery.appBecameInactive()
+            }
         }
         .onChange(of: settings.listeningNavigationPolicy) { _, policy in
             if policy == .stopOnTabChange, store.listeningPhase != .idle,

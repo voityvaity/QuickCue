@@ -39,6 +39,8 @@ final class AppSettings: ObservableObject {
         static let speakerAttributionMode = "settings.speakerAttributionMode"
         static let manualSpeakerRole = "settings.manualSpeakerRole"
         static let hybridDiarizationConsent = "settings.hybridDiarizationConsent"
+        static let diagnosticsPairingProfile = "settings.diagnosticsPairingProfile.v1"
+        static let automaticDiagnosticsDelivery = "settings.automaticDiagnosticsDelivery"
     }
 
     private let defaults: UserDefaults
@@ -111,6 +113,19 @@ final class AppSettings: ObservableObject {
     }
     @Published var hybridDiarizationConsent: Bool {
         didSet { defaults.set(hybridDiarizationConsent, forKey: Key.hybridDiarizationConsent) }
+    }
+    @Published var automaticDiagnosticsDeliveryEnabled: Bool {
+        didSet { defaults.set(automaticDiagnosticsDeliveryEnabled, forKey: Key.automaticDiagnosticsDelivery) }
+    }
+    @Published private(set) var diagnosticsPairingProfile: DiagnosticsPairingProfile? {
+        didSet {
+            if let diagnosticsPairingProfile,
+               let data = try? JSONEncoder().encode(diagnosticsPairingProfile) {
+                defaults.set(data, forKey: Key.diagnosticsPairingProfile)
+            } else {
+                defaults.removeObject(forKey: Key.diagnosticsPairingProfile)
+            }
+        }
     }
     @Published private(set) var connectionReports: [String: ProviderConnectionReport] {
         didSet { persistConnectionReports() }
@@ -198,6 +213,10 @@ final class AppSettings: ObservableObject {
             rawValue: defaults.string(forKey: Key.manualSpeakerRole) ?? ""
         ) ?? .me
         hybridDiarizationConsent = (defaults.object(forKey: Key.hybridDiarizationConsent) as? Bool) ?? false
+        automaticDiagnosticsDeliveryEnabled = (defaults.object(forKey: Key.automaticDiagnosticsDelivery) as? Bool) ?? false
+        diagnosticsPairingProfile = defaults.data(forKey: Key.diagnosticsPairingProfile).flatMap {
+            try? JSONDecoder().decode(DiagnosticsPairingProfile.self, from: $0)
+        }
         connectionReports = decodedConnectionReports
         customProviders = decodedCustomProviders
         self.corruptProviderProfileCount = corruptProviderProfileCount
@@ -211,6 +230,7 @@ final class AppSettings: ObservableObject {
 
         if !contains(primaryProvider) { primaryProvider = .builtIn(.openAI) }
         if !contains(fallbackProvider) { fallbackProvider = .builtIn(.yandexGPT) }
+        if diagnosticsPairingProfile == nil { automaticDiagnosticsDeliveryEnabled = false }
     }
 
     var availableProviders: [ProviderSelection] {
@@ -258,6 +278,15 @@ final class AppSettings: ObservableObject {
         connectionReports.removeValue(forKey: ProviderSelection.custom(id).rawValue)
         if primaryProvider.customID == id { primaryProvider = .builtIn(.openAI) }
         if fallbackProvider.customID == id { fallbackProvider = .builtIn(.yandexGPT) }
+    }
+
+    func saveDiagnosticsPairing(_ profile: DiagnosticsPairingProfile) {
+        diagnosticsPairingProfile = profile
+    }
+
+    func clearDiagnosticsPairing() {
+        automaticDiagnosticsDeliveryEnabled = false
+        diagnosticsPairingProfile = nil
     }
 
     func providerTitle(for selection: ProviderSelection) -> String {

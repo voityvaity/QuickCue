@@ -532,7 +532,7 @@ private struct AttachmentImportView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Источник") {
+                Section {
                     Button { showFileImporter = true } label: { Label("Выбрать PDF или TXT", systemImage: "doc") }
                     PhotosPicker(selection: $selectedPhoto, matching: .images) {
                         Label("Выбрать фото для OCR", systemImage: "photo")
@@ -545,8 +545,10 @@ private struct AttachmentImportView: View {
                         showCamera = true
                     } label: { Label("Сфотографировать документ", systemImage: "camera") }
                     if isProcessing { HStack { ProgressView(); Text("Извлекаю локально…") } }
+                } header: {
+                    Text("Источник")
                 } footer: {
-                    Text("Файл и фото не отправляются AI при импорте. QuickCue сохраняет только извлечённый текст; исходник остаётся в Files/Фото. DOCX пока нужно сохранить как PDF/TXT либо вставить текст ниже.")
+                    Text("Файл и фото не отправляются AI при импорте. QuickCue сохраняет только извлечённый текст; исходник остаётся в Files/Фото. DOCX нужно сохранить как PDF/TXT. Ссылки автоматически не открываются: вставьте доступный вам текст ниже, не включая личные параметры URL.")
                 }
                 Section("Предварительный просмотр") {
                     TextField("Название материала", text: $title)

@@ -22,7 +22,7 @@ struct ContextAttachmentRevision: Codable, Equatable, Sendable {
     let revision: Int
 }
 
-struct BuiltContextSnapshot: Equatable, Sendable {
+struct BuiltContextSnapshot: Codable, Equatable, Sendable {
     let contextProfileID: UUID
     let contextProfileRevision: Int
     let candidateProfileID: UUID?

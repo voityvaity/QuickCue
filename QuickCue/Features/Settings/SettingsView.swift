@@ -145,6 +145,11 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
+                        PreparationHomeView()
+                    } label: {
+                        Label("Подготовка к вакансии", systemImage: "list.clipboard")
+                    }
+                    NavigationLink {
                         ContextProfilesView()
                     } label: {
                         LabeledContent {
@@ -158,6 +163,23 @@ struct SettingsView: View {
                     Text("Контекст интервью")
                 } footer: {
                     Text("Резюме не обязательно. Выбранные локальные данные фиксируются для сессии и передаются вашему AI вместе с вопросом.")
+                }
+
+                Section {
+                    NavigationLink {
+                        PreflightView()
+                    } label: {
+                        Label("Проверка готовности", systemImage: "checkmark.circle")
+                    }
+                    NavigationLink {
+                        NavigationPreviewView()
+                    } label: {
+                        Label("Preview будущей навигации", systemImage: "rectangle.on.rectangle")
+                    }
+                } header: {
+                    Text("Быстрый вход")
+                } footer: {
+                    Text("Preview не меняет нынешние пять вкладок. Значимый переход навигации выполняется только после вашего отдельного одобрения.")
                 }
 
                 Section("Расходы и лимиты") {
@@ -183,6 +205,11 @@ struct SettingsView: View {
                     Text("При запросе текст передаётся выбранному AI. Фото передаётся vision-модели, а текстовой модели — только распознанный текст. В тестовом режиме данные не отправляются.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("Локальная диагностика", systemImage: "stethoscope")
+                    }
                 }
 
                 Section("О приложении") {

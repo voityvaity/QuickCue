@@ -31,6 +31,14 @@ jobs:
       - name: Validate privacy manifest and repository safety
         run: python3 .github/scripts/validate_repository.py
 
+      - name: Test offline diagnostics analyzer
+        run: python3 .github/scripts/test_diagnostics_analyzer.py
+
+      - name: Test encrypted diagnostics receiver protocol
+        run: |
+          python3 -m pip install --disable-pip-version-check -r tools/quickcue_receiver/requirements.txt
+          python3 .github/scripts/test_quickcue_receiver.py
+
       - name: Test real Darwin URLSession transport and record Foundation framing
         run: |
           set -o pipefail
@@ -136,7 +144,7 @@ jobs:
           pathlib.Path("TestResults/build-identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
           print(json.dumps(identity), flush=True)
           assert identity["CFBundleShortVersionString"] == "0.3.1", f"Unexpected version: {identity['CFBundleShortVersionString']!r}"
-          assert identity["CFBundleVersion"] == "5", f"Unexpected build: {identity['CFBundleVersion']!r}"
+          assert identity["CFBundleVersion"] == "7", f"Unexpected build: {identity['CFBundleVersion']!r}"
           assert identity["QuickCueSourceRevision"] == os.environ["GITHUB_SHA"], "Source revision missing or mismatched"
           PY
 

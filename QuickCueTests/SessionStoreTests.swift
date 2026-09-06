@@ -550,6 +550,35 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertFalse(rows.contains { $0.requestID == requestID })
     }
 
+    func testPreparationIsExplicitSeparateWorkAndRecordsUsageWithoutConversation() async throws {
+        let fixture = try SessionFixture()
+        defer { fixture.close() }
+        let job = JobProfile(title: "Backend developer")
+        job.company = "Компания A"
+        job.role = "Junior Python"
+        job.vacancyText = "Python, SQL, async"
+        let snapshot = PreparationJobSnapshot(job: job)
+        let planID = UUID()
+
+        let task = Task {
+            try await fixture.store.generatePreparationPlan(snapshot: snapshot, planID: planID) { _ in }
+        }
+        try await waitUntil { fixture.provider.requests.count == 1 }
+        XCTAssertNil(fixture.store.currentSession)
+        XCTAssertEqual(fixture.provider.requests.first?.id, planID)
+        XCTAssertTrue(fixture.provider.requests.first?.question.contains("Компания A") == true)
+        fixture.provider.complete(planID, text: "1. Повторить Python")
+        let result = try await task.value
+
+        XCTAssertEqual(result.text, "1. Повторить Python")
+        XCTAssertTrue(try fixture.context.fetch(FetchDescriptor<SessionRecord>()).isEmpty)
+        let usage = try fixture.context.fetch(FetchDescriptor<UsageRecord>())
+        XCTAssertEqual(usage.count, 1)
+        XCTAssertNil(usage.first?.sessionID)
+        XCTAssertEqual(usage.first?.requestKind, "preparation_plan")
+        XCTAssertEqual(usage.first?.requestID, planID)
+    }
+
     private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
         let deadline = Date.now.addingTimeInterval(3)
         while !condition() {

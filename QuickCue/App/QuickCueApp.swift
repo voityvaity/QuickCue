@@ -5,12 +5,18 @@ import SwiftUI
 struct QuickCueApp: App {
     @StateObject private var settings: AppSettings
     @StateObject private var persistence: PersistenceController
+    @StateObject private var diagnosticsDelivery: DiagnosticsDeliveryController
 
     init() {
         let settings = AppSettings()
+        let diagnosticsDelivery = DiagnosticsDeliveryController(settings: settings)
         ProviderSetupRecoveryStore().recoverIfNeeded(settings: settings, secretStore: KeychainStore())
         _settings = StateObject(wrappedValue: settings)
-        _persistence = StateObject(wrappedValue: PersistenceController(settings: settings))
+        _diagnosticsDelivery = StateObject(wrappedValue: diagnosticsDelivery)
+        _persistence = StateObject(wrappedValue: PersistenceController(
+            settings: settings,
+            onSessionEnded: diagnosticsDelivery.sessionEnded
+        ))
     }
 
     var body: some Scene {
@@ -20,6 +26,7 @@ struct QuickCueApp: App {
                     RootView()
                         .environmentObject(settings)
                         .environmentObject(sessionStore)
+                        .environmentObject(diagnosticsDelivery)
                         .modelContainer(container)
                 } else {
                     StorageRecoveryView(retry: persistence.open)

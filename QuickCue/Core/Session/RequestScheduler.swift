@@ -3,6 +3,7 @@ import Foundation
 enum RequestWorkOwner: Hashable, Sendable {
     case session(UUID)
     case setup(UUID)
+    case preparation(UUID)
 }
 
 /// One foreground queue shared by conversation and generative setup work.
@@ -102,6 +103,31 @@ final class RequestScheduler {
         return ticket
     }
 
+    @discardableResult
+    func enqueuePreparation(
+        id: UUID = UUID(),
+        preparationID: UUID,
+        operation: @escaping @MainActor () async -> Void,
+        onCancel: @escaping @MainActor () -> Void = {}
+    ) -> Ticket {
+        let ticket = Ticket(id: id)
+        guard !isCancellingAll, running[id] == nil,
+              !pending.contains(where: { $0.id == id }) else {
+            onCancel()
+            ticket.finish()
+            return ticket
+        }
+        pending.append(Item(
+            id: id,
+            owner: .preparation(preparationID),
+            ticket: ticket,
+            operation: operation,
+            onCancel: onCancel
+        ))
+        drain()
+        return ticket
+    }
+
     func cancel(_ id: UUID) {
         if let index = pending.firstIndex(where: { $0.id == id }) {
             let item = pending.remove(at: index)
@@ -180,7 +206,7 @@ final class RequestScheduler {
     private func isEligible(_ owner: RequestWorkOwner) -> Bool {
         switch owner {
         case .session(let id): id == sessionID
-        case .setup: true
+        case .setup, .preparation: true
         }
     }
 }
