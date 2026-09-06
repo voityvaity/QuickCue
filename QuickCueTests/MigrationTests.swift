@@ -174,8 +174,8 @@ final class MigrationTests: XCTestCase {
         try autoreleasepool {
             let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
             let context = ModelContext(container)
-            let transcript = try XCTUnwrap(context.fetch(FetchDescriptor<TranscriptRecord>()).first)
-            let answer = try XCTUnwrap(context.fetch(FetchDescriptor<AnswerRecord>()).first)
+            let transcript = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.TranscriptRecord>()).first)
+            let answer = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.AnswerRecord>()).first)
             XCTAssertEqual(transcript.id, transcriptID)
             XCTAssertEqual(transcript.revision, 1)
             XCTAssertEqual(answer.id, answerID)
@@ -188,7 +188,7 @@ final class MigrationTests: XCTestCase {
 
         try autoreleasepool {
             let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
-            let answer = try ModelContext(reopened).fetch(FetchDescriptor<AnswerRecord>()).first
+            let answer = try ModelContext(reopened).fetch(FetchDescriptor<QuickCue.AnswerRecord>()).first
             XCTAssertEqual(answer?.id, answerID)
             XCTAssertTrue(answer?.isFavorite == true)
         }
@@ -221,8 +221,8 @@ final class MigrationTests: XCTestCase {
         try autoreleasepool {
             let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
             let context = ModelContext(container)
-            let session = try XCTUnwrap(context.fetch(FetchDescriptor<SessionRecord>()).first)
-            let oldAnswer = try XCTUnwrap(context.fetch(FetchDescriptor<AnswerRecord>()).first)
+            let session = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.SessionRecord>()).first)
+            let oldAnswer = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.AnswerRecord>()).first)
             XCTAssertEqual(session.id, sessionID)
             XCTAssertNil(session.contextSnapshotID)
             XCTAssertNil(oldAnswer.contextSnapshotID)
@@ -257,7 +257,7 @@ final class MigrationTests: XCTestCase {
             XCTAssertEqual(try context.fetch(FetchDescriptor<CandidateProfile>()).first?.id, candidateID)
             XCTAssertEqual(try context.fetch(FetchDescriptor<JobProfile>()).first?.id, jobID)
             XCTAssertEqual(try context.fetch(FetchDescriptor<SessionContextSnapshot>()).first?.id, snapshotID)
-            XCTAssertEqual(try context.fetch(FetchDescriptor<SessionRecord>()).first?.contextSnapshotID, snapshotID)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.SessionRecord>()).first?.contextSnapshotID, snapshotID)
         }
     }
 
@@ -295,8 +295,8 @@ final class MigrationTests: XCTestCase {
         try autoreleasepool {
             let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
             let context = ModelContext(container)
-            let transcript = try XCTUnwrap(context.fetch(FetchDescriptor<TranscriptRecord>()).first)
-            let answer = try XCTUnwrap(context.fetch(FetchDescriptor<AnswerRecord>()).first)
+            let transcript = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.TranscriptRecord>()).first)
+            let answer = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.AnswerRecord>()).first)
             XCTAssertEqual(transcript.id, transcriptID)
             XCTAssertEqual(answer.id, answerID)
             XCTAssertNil(transcript.speechEngineRaw)
@@ -311,8 +311,8 @@ final class MigrationTests: XCTestCase {
         try autoreleasepool {
             let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
             let context = ModelContext(reopened)
-            XCTAssertEqual(try context.fetch(FetchDescriptor<TranscriptRecord>()).first?.speechEngineRaw, "SFSpeechRecognizer")
-            XCTAssertEqual(try context.fetch(FetchDescriptor<AnswerRecord>()).first?.queueWaitMilliseconds, 12)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.TranscriptRecord>()).first?.speechEngineRaw, "SFSpeechRecognizer")
+            XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.AnswerRecord>()).first?.queueWaitMilliseconds, 12)
         }
     }
 
@@ -343,7 +343,7 @@ final class MigrationTests: XCTestCase {
         try autoreleasepool {
             let container = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
             let context = ModelContext(container)
-            let message = try XCTUnwrap(context.fetch(FetchDescriptor<ConversationMessageRecord>()).first)
+            let message = try XCTUnwrap(context.fetch(FetchDescriptor<QuickCue.ConversationMessageRecord>()).first)
             XCTAssertEqual(message.id, messageID)
             XCTAssertNil(message.speakerSourceRaw)
             XCTAssertNil(message.speakerConfidence)
@@ -356,7 +356,7 @@ final class MigrationTests: XCTestCase {
 
         try autoreleasepool {
             let reopened = try PersistenceController.makeContainer(configuration: ModelConfiguration(url: storeURL))
-            let message = try ModelContext(reopened).fetch(FetchDescriptor<ConversationMessageRecord>()).first
+            let message = try ModelContext(reopened).fetch(FetchDescriptor<QuickCue.ConversationMessageRecord>()).first
             XCTAssertEqual(message?.speakerSourceRaw, SpeakerAttributionSource.manual.rawValue)
             XCTAssertTrue(message?.speakerManuallyLocked == true)
         }
