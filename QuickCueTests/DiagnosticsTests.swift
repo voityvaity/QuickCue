@@ -44,6 +44,40 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertGreaterThan(snapshot.droppedEvents, 0)
     }
 
+    func testRecorderPrunesExpiredEventsWhenAppending() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DiagnosticsTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoder.encode(DiagnosticEvent.scheduler(active: 1, pending: 0)))
+                as? [String: Any]
+        )
+        object["occurredAt"] = "1970-01-01T00:00:00Z"
+        var expiredLine = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        expiredLine.append(0x0A)
+        try expiredLine.write(to: directory.appendingPathComponent("events-v1.jsonl"), options: .atomic)
+
+        let recorder = DiagnosticsRecorder(
+            directory: directory,
+            configuration: .init(
+                maximumStoredBytes: 64 * 1_024,
+                retentionSeconds: 60,
+                maximumPendingWrites: 8,
+                maximumEventBytes: 64 * 1_024
+            )
+        )
+        recorder.record(.scheduler(active: 0, pending: 1))
+
+        let snapshot = await recorder.snapshot()
+        XCTAssertEqual(snapshot.events.count, 1)
+        XCTAssertEqual(snapshot.events.first?.activeCount, 0)
+        XCTAssertEqual(snapshot.events.first?.pendingCount, 1)
+    }
+
     func testArchiveContainsOnlyThreeFixedFilesAndNoCanaryContent() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DiagnosticsTests-\(UUID().uuidString)", isDirectory: true)

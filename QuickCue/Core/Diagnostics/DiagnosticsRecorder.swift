@@ -141,10 +141,11 @@ final class DiagnosticsRecorder: @unchecked Sendable {
 
     private func prune(now: Date) throws {
         let size = (try? eventsURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        let events = try readEvents().filter {
+        let storedEvents = try readEvents()
+        let events = storedEvents.filter {
             now.timeIntervalSince($0.occurredAt) <= configuration.retentionSeconds
         }
-        guard size > configuration.maximumStoredBytes || events.count != (try readEvents()).count else { return }
+        guard size > configuration.maximumStoredBytes || events.count != storedEvents.count else { return }
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
