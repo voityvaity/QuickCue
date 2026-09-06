@@ -23,12 +23,13 @@ struct DiagnosticsPairingInvitation: Codable, Equatable, Sendable {
         let invitation: Self
         do { invitation = try decoder.decode(Self.self, from: data) }
         catch { throw DiagnosticsPairingError.invalidCode }
+        let publicKeyData = Data(base64URL: invitation.publicKey)
         guard invitation.schemaVersion == 1,
               invitation.expiresAt > now,
               invitation.expiresAt.timeIntervalSince(now) <= 20 * 60,
               Self.isPrivateLANHost(invitation.host),
               invitation.port > 0,
-              Data(base64URL: invitation.publicKey)?.count == 65,
+              publicKeyData.flatMap({ try? P256.KeyAgreement.PublicKey(x963Representation: $0) }) != nil,
               (16...64).contains(Data(base64URL: invitation.oneTimeSecret)?.count ?? 0)
         else { throw DiagnosticsPairingError.invalidCode }
         return invitation
