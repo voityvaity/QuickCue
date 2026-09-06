@@ -1,4 +1,5 @@
 import Combine
+import SwiftData
 import SwiftUI
 
 struct RootView: View {
@@ -6,7 +7,9 @@ struct RootView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var diagnosticsDelivery: DiagnosticsDeliveryController
     @Environment(\.scenePhase) private var scenePhase
+    @Query private var interviewEvents: [InterviewEventRecord]
     @State private var navigation = TabNavigationCoordinator()
+    @State private var requestedInterview: InterviewEventRecord?
 
     var body: some View {
         TabView(selection: Binding(
@@ -77,11 +80,24 @@ struct RootView: View {
                 store.stopAllListening()
             }
         }
-        .onAppear(perform: consumePendingCameraRequest)
+        .onAppear {
+            consumePendingCameraRequest()
+            consumePendingInterviewRequest()
+        }
         .onReceive(NotificationCenter.default.publisher(
             for: QuickCueNavigationRequestStore.cameraRequestNotification
         )) { _ in
             consumePendingCameraRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: InterviewNavigationRequestStore.notification)) { _ in
+            consumePendingInterviewRequest()
+        }
+        .onOpenURL { url in
+            guard let id = InterviewNavigationRequestStore.id(from: url) else { return }
+            presentInterview(id)
+        }
+        .sheet(item: $requestedInterview) { event in
+            NavigationStack { InterviewEventDetailView(event: event) }
         }
     }
 
@@ -106,6 +122,15 @@ struct RootView: View {
     private func consumePendingCameraRequest() {
         guard QuickCueNavigationRequestStore.consumeCameraRequest() else { return }
         requestTab(.camera)
+    }
+
+    private func consumePendingInterviewRequest() {
+        guard let id = InterviewNavigationRequestStore.consume() else { return }
+        presentInterview(id)
+    }
+
+    private func presentInterview(_ id: UUID) {
+        requestedInterview = interviewEvents.first { $0.id == id }
     }
 }
 

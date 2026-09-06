@@ -14,7 +14,7 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
     SUPPORTS_MACCATALYST: NO
     ENABLE_USER_SCRIPT_SANDBOXING: YES
-    CURRENT_PROJECT_VERSION: 7
+    CURRENT_PROJECT_VERSION: 8
     MARKETING_VERSION: 0.3.1
     QUICKCUE_SOURCE_REVISION: unknown
 configs:
@@ -44,12 +44,16 @@ targets:
         NSSpeechRecognitionUsageDescription: "QuickCue преобразует окружающую речь в текст и ищет вопросы."
         NSCameraUsageDescription: "QuickCue фотографирует задачи, чтобы распознать текст и подготовить ответ."
         NSBluetoothAlwaysUsageDescription: "Bluetooth нужен для будущей поддержки совместимой BLE-кнопки съёмки."
+        NSCalendarsFullAccessUsageDescription: "QuickCue добавляет только выбранное вами интервью в системный календарь после отдельного нажатия."
         NSLocalNetworkUsageDescription: "Локальная сеть используется только после вашей привязки, чтобы отправлять зашифрованную техническую диагностику на выбранный вами ПК."
         UIApplicationSupportsIndirectInputEvents: true
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        CFBundleURLTypes: []
+        CFBundleURLTypes:
+          - CFBundleURLName: ru.quickcue.interview
+            CFBundleURLSchemes:
+              - quickcue
     entitlements:
       path: QuickCue/Resources/QuickCue.entitlements
       properties: {}

@@ -17,6 +17,10 @@ struct PreparationHomeView: View {
     @State private var generationID: UUID?
     @State private var errorMessage: String?
 
+    init(initialJobID: UUID? = nil) {
+        _selectedJobID = State(initialValue: initialJobID)
+    }
+
     var body: some View {
         List {
             if jobs.isEmpty {
@@ -103,6 +107,11 @@ struct PreparationHomeView: View {
             }
 
             Section {
+                NavigationLink {
+                    InterviewScheduleView()
+                } label: {
+                    Label("Расписание интервью", systemImage: "calendar")
+                }
                 NavigationLink {
                     QuestionBankView()
                 } label: {

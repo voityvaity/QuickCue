@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct QuickCueApp: App {
+    @UIApplicationDelegateAdaptor(InterviewNotificationDelegate.self) private var notificationDelegate
     @StateObject private var settings: AppSettings
     @StateObject private var persistence: PersistenceController
     @StateObject private var diagnosticsDelivery: DiagnosticsDeliveryController

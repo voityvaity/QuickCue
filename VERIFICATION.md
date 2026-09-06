@@ -1,26 +1,27 @@
-# Проверка QuickCue — этапы 01–18
+# Проверка QuickCue — этапы 01–22
 
 ## Статус на 6 сентября 2026
 
-Пакет A подтверждён зелёным CI для `f73e0ba`; установленная поверх старой сборка build 4 сохранила историю/Keychain и дала 5/5 DeepSeek-ответов. Проверка неверного ключа на устройстве не выполнена. Этапы 09–14 подтверждены зелёным GitHub Actions `34030036373` для `6c67191`: validator, Simulator build, 238 XCTest, iphoneos build и unsigned IPA прошли. Этапы 15–18 собраны поверх этой базы; их новый GitHub Actions после push намеренно не ожидается по указанию пользователя.
+Пакет A подтверждён зелёным CI для `f73e0ba`; установленная поверх старой сборка build 4 сохранила историю/Keychain и дала 5/5 DeepSeek-ответов. Проверка неверного ключа на устройстве не выполнена. Этапы 15–18 подтверждены зелёным [GitHub Actions 34032406862](https://github.com/voityvaity/QuickCue/actions/runs/34032406862) для `8815908`: validator, offline tools, Darwin transport, Simulator build, XCTest, iphoneos build, identity и unsigned IPA прошли. Этапы 19–22 собраны поверх этой подтверждённой базы; новый GitHub Actions после push по указанию пользователя не ожидается.
 
 Полный перечень изменённых файлов, статусы A0/A1/A2/A3, риски и device checklist: [PACKAGE-A-REVIEW.md](docs/PACKAGE-A-REVIEW.md).
 
-Подтверждено локально для этапов 15–18:
+Подтверждено локально для этапов 19–22:
 
 - Поиск вероятных секретов, privacy manifest и номера версии: PASS (`.github/scripts/validate_repository.py`, включая untracked text candidates).
 - Tree-sitter всех Swift-файлов приложения, тестов и legacy fixture: PASS. Это **не typecheck, не XCTest и не проверка Apple API**.
 - XML/plist, asset JSON и два YAML-файла проекта/CI: PASS.
 - `git diff --check`: PASS.
-- Добавлены regression-тесты 60-вопросного локального банка, фильтров/избранного/дубликатов, V7→V8→V9, сохранения принятого ответа при recovery, общей очереди practice, отсутствия фиктивной Live-сессии, evidence/rubric/revision, voice/TTS isolation, полного интервью, background и блокировки позднего callback после завершения.
+- Добавлены regression-тесты расписания/часовых поясов/дубликатов/deep link, V10, ZIP STORE CRC/path safety, backup staging→restore/conflict/no-Keychain, tombstone restore/purge и статуса CloudKit readiness. Доступные Python-тесты анализатора/receiver выполняются отдельно перед commit.
 
 Не выполнены на Windows:
 
 - Xcode typecheck, iOS XCTest, Simulator/iphoneos build и проверка source revision внутри новой IPA.
-- Миграция реальной установленной базы V7 → V9, UI банка/тренировки, voice/TTS, фон и сохранение старых данных непосредственно на iPhone.
+- Миграция реальной установленной базы V9 → V10, календарь/уведомления, notification routing и backup→clean-install→restore с фото непосредственно на iPhone.
+- CloudKit sync намеренно не реализован: пустой entitlement, Sideloadly и один iPhone не удовлетворяют условиям этапа I3. Это зафиксированный перенос, а не успешный sync-test.
 - Реальная совместимость пользовательского агрегатора с выбранным им протоколом; fixtures не заменяют его документацию и сетевой ответ.
 
-Обновление устанавливать поверх прежнего с тем же bundle ID и совместимой подписью. Старую установку не удалять. Автоматической телеметрии, новых ключей, облачной диаризации и платных ПК-проверок в этом проходе нет. Этап 19 не начинался.
+Обновление устанавливать поверх прежнего с тем же bundle ID и совместимой подписью. Старую установку не удалять. Проверку restore проводить на отдельной тестовой установке/на тестовых данных, а не уничтожением единственной живой истории. Автоматической телеметрии, новых ключей, CloudKit, облачной диаризации и платных ПК-проверок в этом проходе нет. Следующий этап 23 не начинался.
 
 ## Исторический результат версии 0.3
 

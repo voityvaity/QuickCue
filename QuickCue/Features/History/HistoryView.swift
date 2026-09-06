@@ -93,6 +93,7 @@ struct HistoryView: View {
     @Query private var usage: [UsageRecord]
     @Query private var conversationMessages: [ConversationMessageRecord]
     @Query private var contextSnapshots: [SessionContextSnapshot]
+    @Query private var deletedItems: [DeletedItemRecord]
     @State private var searchText = ""
     @State private var filter: HistoryFilter = .all
     @State private var contextFilter = ""
@@ -101,7 +102,7 @@ struct HistoryView: View {
     @State private var deletionError: String?
 
     private var visibleSessions: [SessionRecord] {
-        sessions.filter { session in
+        liveSessions.filter { session in
             let entries = timeline(session)
             let matchesFilter: Bool
             switch filter {
@@ -142,7 +143,12 @@ struct HistoryView: View {
     }
 
     private var contextTitles: [String] {
-        Array(Set(sessions.compactMap(\.contextTitle))).sorted()
+        Array(Set(liveSessions.compactMap(\.contextTitle))).sorted()
+    }
+
+    private var liveSessions: [SessionRecord] {
+        let deletedSessionIDs = Set(deletedItems.filter { $0.kindRaw == "session" }.map(\.originalID))
+        return sessions.filter { !deletedSessionIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -180,19 +186,19 @@ struct HistoryView: View {
             .searchable(text: $searchText, prompt: "Реплика, вопрос, ответ или модель")
             .navigationTitle("История")
             .toolbar {
-                if !sessions.isEmpty {
+                if !liveSessions.isEmpty {
                     Button(role: .destructive) { confirmDeleteAll = true } label: { Image(systemName: "trash") }
                         .accessibilityLabel("Удалить всю историю")
                 }
             }
-            .confirmationDialog("Удалить всю локальную историю?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
-                Button("Удалить без возможности отмены", role: .destructive) { deleteSessions(ids: Set(sessions.map(\.id))) }
+            .confirmationDialog("Переместить всю историю в недавно удалённые?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+                Button("Переместить", role: .destructive) { deleteSessions(ids: Set(liveSessions.map(\.id))) }
                 Button("Отмена", role: .cancel) {}
             }
-            .confirmationDialog("Удалить сессию, её реплики, ответы и фото?", isPresented: Binding(
+            .confirmationDialog("Переместить сессию в недавно удалённые?", isPresented: Binding(
                 get: { sessionToDelete != nil }, set: { if !$0 { sessionToDelete = nil } }
             ), titleVisibility: .visible) {
-                Button("Удалить сессию", role: .destructive) {
+                Button("Переместить", role: .destructive) {
                     if let sessionToDelete { deleteSessions(ids: [sessionToDelete.id]) }
                     sessionToDelete = nil
                 }
@@ -201,6 +207,7 @@ struct HistoryView: View {
             .alert("История", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
                 Button("OK") { deletionError = nil }
             } message: { Text(deletionError ?? "") }
+            .task { try? RecentlyDeletedService.purgeExpired(context: modelContext) }
         }
     }
 
@@ -247,20 +254,14 @@ struct HistoryView: View {
 
     private func deleteSessions(ids: Set<UUID>) {
         if let current = store.currentSession, ids.contains(current.id) { store.endSession() }
-        let targets = photos.filter { $0.sessionID.map(ids.contains) ?? false }
         do {
-            // Delete protected photo files before their references; surface any storage failure.
-            for photo in targets { try PhotoStore().delete(relativePath: photo.relativePath) }
-            targets.forEach { modelContext.delete($0) }
-            conversationMessages.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
-            answers.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
-            transcripts.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
-            usage.filter { $0.sessionID.map(ids.contains) ?? false }.forEach { modelContext.delete($0) }
-            contextSnapshots.filter { ids.contains($0.sessionID) }.forEach { modelContext.delete($0) }
-            sessions.filter { ids.contains($0.id) }.forEach { modelContext.delete($0) }
-            try modelContext.save()
+            try RecentlyDeletedService.moveSessions(
+                sessions.filter { ids.contains($0.id) },
+                existingTombstones: deletedItems,
+                context: modelContext
+            )
         } catch {
-            deletionError = "Не удалось полностью удалить историю. Некоторые фото могли быть удалены. Повторите удаление после перезапуска приложения."
+            deletionError = "Не удалось переместить историю. Исходные данные и фотографии не удалены."
         }
     }
 }

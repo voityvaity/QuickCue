@@ -145,6 +145,11 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
+                        InterviewScheduleView()
+                    } label: {
+                        Label("Расписание интервью", systemImage: "calendar")
+                    }
+                    NavigationLink {
                         PreparationHomeView()
                     } label: {
                         Label("Подготовка к вакансии", systemImage: "list.clipboard")
@@ -209,6 +214,11 @@ struct SettingsView: View {
                         DiagnosticsView()
                     } label: {
                         Label("Локальная диагностика", systemImage: "stethoscope")
+                    }
+                    NavigationLink {
+                        DataBackupView()
+                    } label: {
+                        Label("Резервная копия и восстановление", systemImage: "externaldrive.badge.timemachine")
                     }
                 }
 

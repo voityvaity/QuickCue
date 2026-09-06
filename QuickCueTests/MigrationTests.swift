@@ -410,6 +410,55 @@ final class MigrationTests: XCTestCase {
         }
     }
 
+    func testVersionedV9StoreMigratesToV10AndKeepsOldDataWritable() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("default.store")
+        let sessionID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: QuickCueSchemaV9.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
+            )
+            let context = ModelContext(container)
+            context.insert(QuickCueSchemaV7.SessionRecord(id: sessionID, title: "V9", provider: .mock))
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let container = try PersistenceController.makeContainer(
+                configuration: ModelConfiguration(url: storeURL)
+            )
+            let context = ModelContext(container)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<QuickCue.SessionRecord>()).first?.id, sessionID)
+            context.insert(InterviewEventRecord(
+                company: "Acme",
+                role: "iOS",
+                scheduledAt: .now.addingTimeInterval(86_400),
+                timeZoneIdentifier: "Europe/Moscow"
+            ))
+            context.insert(DeletedItemRecord(
+                originalID: sessionID,
+                kindRaw: "session",
+                title: "V9",
+                purgeAfter: .now.addingTimeInterval(86_400)
+            ))
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let reopened = try PersistenceController.makeContainer(
+                configuration: ModelConfiguration(url: storeURL)
+            )
+            let context = ModelContext(reopened)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<QuickCue.SessionRecord>()), 1)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<InterviewEventRecord>()), 1)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<DeletedItemRecord>()), 1)
+        }
+    }
+
     func testRecoveryPreservesCorruptStoreAndAllowsRetryWithoutReset() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
