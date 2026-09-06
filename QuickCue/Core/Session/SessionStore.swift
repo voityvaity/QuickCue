@@ -761,6 +761,9 @@ final class SessionStore: ObservableObject {
         for record in visibleAnswers where matches(record) {
             record.isStale = true
             if active.contains(record.statusRaw) { scheduler.cancel(record.id) }
+            // A corrected question must not leave its obsolete answer in the
+            // context used by future requests. The historical record remains.
+            turns.removeAll { $0.id == record.id }
         }
     }
 
@@ -1002,6 +1005,8 @@ final class SessionStore: ObservableObject {
             confidence: confidence,
             transcriptID: transcript.id
         )
+        message.speakerSourceRaw = source.rawValue
+        message.speakerManuallyLocked = manuallyLocked
         modelContext.insert(message)
         visibleConversationMessages.append(message)
         conversationUpdateRevision += 1
@@ -1023,8 +1028,6 @@ final class SessionStore: ObservableObject {
             sourceMessageID: message.id,
             questionRevision: message.revision
         )
-        message.speakerSourceRaw = source.rawValue
-        message.speakerManuallyLocked = manuallyLocked
     }
 
     private func registerTranscriptIfNew(

@@ -79,7 +79,7 @@ final class DiagnosticsPairingTests: XCTestCase {
         let secrets = MemorySecretStore()
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DiagnosticsPairingTests-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
+        defer { removeDirectoryIfPresent(directory) }
         let controller = DiagnosticsDeliveryController(
             settings: settings,
             recorder: DiagnosticsRecorder(directory: directory.appendingPathComponent("events")),
@@ -118,7 +118,7 @@ final class DiagnosticsPairingTests: XCTestCase {
     func testOptInDeliversEncryptedReportAndRemovesItFromQueue() async throws {
         let fixture = try makeController(reportBehavior: .succeed)
         defer { fixture.defaults.removePersistentDomain(forName: fixture.defaultsName) }
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { removeDirectoryIfPresent(fixture.directory) }
         try await fixture.controller.pair(using: fixture.code)
         fixture.controller.setAutomaticDelivery(true)
         fixture.recorder.record(.scheduler(active: 1, pending: 2))
@@ -139,7 +139,7 @@ final class DiagnosticsPairingTests: XCTestCase {
     func testUnavailableReceiverLeavesOneBoundedQueuedReport() async throws {
         let fixture = try makeController(reportBehavior: .failConnection)
         defer { fixture.defaults.removePersistentDomain(forName: fixture.defaultsName) }
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { removeDirectoryIfPresent(fixture.directory) }
         try await fixture.controller.pair(using: fixture.code)
         fixture.controller.setAutomaticDelivery(true)
         fixture.controller.sessionEnded()
@@ -164,7 +164,7 @@ final class DiagnosticsPairingTests: XCTestCase {
         let secret = Data(repeating: 23, count: 32)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DiagnosticsPairingCancellationTests-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
+        defer { removeDirectoryIfPresent(directory) }
         let transport = PairingAckTransport(
             receiverID: receiverID, pairID: pairID, secret: secret,
             receiverPrivateKey: receiver, pairDelayNanoseconds: 5_000_000_000
@@ -246,6 +246,11 @@ final class DiagnosticsPairingTests: XCTestCase {
             guard Date.now < deadline else { throw DiagnosticsPairingError.connection }
             try await Task.sleep(nanoseconds: 1_000_000)
         }
+    }
+
+    private func removeDirectoryIfPresent(_ directory: URL) {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        try? FileManager.default.removeItem(at: directory)
     }
 
     private func code(
