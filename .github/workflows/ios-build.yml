@@ -36,8 +36,11 @@ jobs:
 
       - name: Test encrypted diagnostics receiver protocol
         run: |
-          python3 -m pip install --disable-pip-version-check -r tools/quickcue_receiver/requirements.txt
-          python3 .github/scripts/test_quickcue_receiver.py
+          python3 -m venv "$RUNNER_TEMP/quickcue-receiver-venv"
+          "$RUNNER_TEMP/quickcue-receiver-venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            -r tools/quickcue_receiver/requirements.txt
+          "$RUNNER_TEMP/quickcue-receiver-venv/bin/python" .github/scripts/test_quickcue_receiver.py
 
       - name: Test real Darwin URLSession transport and record Foundation framing
         run: |
