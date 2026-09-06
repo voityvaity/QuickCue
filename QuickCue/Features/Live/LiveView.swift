@@ -41,27 +41,7 @@ struct LiveView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("QuickCue")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        PreflightView()
-                    } label: {
-                        Image(systemName: "checkmark.circle")
-                    }
-                    .accessibilityLabel("Проверить готовность")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        PreparationHomeView()
-                    } label: {
-                        Image(systemName: "list.clipboard")
-                    }
-                    .accessibilityLabel("Подготовка к вакансии")
-                }
-                if store.currentSession != nil {
-                    Button("Завершить") { store.endSession() }
-                }
-            }
+            .toolbar { liveToolbar }
             .alert("QuickCue", isPresented: Binding(
                 get: { store.alertMessage != nil },
                 set: { if !$0 { store.alertMessage = nil } }
@@ -69,6 +49,25 @@ struct LiveView: View {
                 Button("OK") { store.alertMessage = nil }
             } message: {
                 Text(store.alertMessage ?? "")
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var liveToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            NavigationLink(destination: PreflightView()) {
+                Image(systemName: "checkmark.circle")
+            }
+            .accessibilityLabel("Проверить готовность")
+        }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            NavigationLink(destination: PreparationHomeView()) {
+                Image(systemName: "list.clipboard")
+            }
+            .accessibilityLabel("Подготовка к вакансии")
+            if store.currentSession != nil {
+                Button("Завершить") { store.endSession() }
             }
         }
     }
