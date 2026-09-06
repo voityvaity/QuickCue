@@ -253,22 +253,24 @@ final class SessionStore: ObservableObject {
                                 requestKind: "preparation_plan",
                                 settings: self.settings
                             )
+                            let finish: DiagnosticFinishCategory = switch attempt.outcome {
+                            case .succeeded: .complete
+                            case .failed: .failed
+                            case .cancelled: .cancelled
+                            }
+                            let usageProvenance: DiagnosticUsageProvenance = switch row.usageSourceRaw {
+                            case "reported": .reported
+                            case "estimated": .estimated
+                            default: .unknown
+                            }
                             self.diagnostics.record(.attempt(
                                 sessionID: nil,
                                 requestID: attempt.requestID,
                                 provider: attempt.selection,
                                 durationMilliseconds: attempt.durationMilliseconds,
-                                finish: switch attempt.outcome {
-                                case .succeeded: .complete
-                                case .failed: .failed
-                                case .cancelled: .cancelled
-                                },
+                                finish: finish,
                                 errorCode: attempt.errorCode,
-                                usageProvenance: switch row.usageSourceRaw {
-                                case "reported": .reported
-                                case "estimated": .estimated
-                                default: .unknown
-                                },
+                                usageProvenance: usageProvenance,
                                 inputTokens: row.usageSourceRaw == "unknown" ? nil : row.inputTokens,
                                 outputTokens: row.usageSourceRaw == "unknown" ? nil : row.outputTokens,
                                 knownCostRUB: row.costSourceRaw == "calculated" ? row.estimatedCostRUB : nil
@@ -1268,23 +1270,25 @@ final class SessionStore: ObservableObject {
                         // retained sessions may still be charged; removed ones must stay removed.
                         guard let context = session.modelContext, !session.isDeleted else { return }
                         let row = ledger.recordAttempt(attempt, sessionID: session.id, requestKind: mode.rawValue, settings: settings)
+                        let finish: DiagnosticFinishCategory = switch attempt.outcome {
+                        case .succeeded: .complete
+                        case .failed: .failed
+                        case .cancelled: .cancelled
+                        }
+                        let usageProvenance: DiagnosticUsageProvenance = switch row.usageSourceRaw {
+                        case "reported": .reported
+                        case "estimated": .estimated
+                        default: row.costSourceRaw == "free_mock" ? .freeMock
+                            : (row.costSourceRaw == "not_sent" ? .notSent : .unknown)
+                        }
                         self.diagnostics.record(.attempt(
                             sessionID: session.id,
                             requestID: attempt.requestID,
                             provider: attempt.selection,
                             durationMilliseconds: attempt.durationMilliseconds,
-                            finish: switch attempt.outcome {
-                            case .succeeded: .complete
-                            case .failed: .failed
-                            case .cancelled: .cancelled
-                            },
+                            finish: finish,
                             errorCode: attempt.errorCode,
-                            usageProvenance: switch row.usageSourceRaw {
-                            case "reported": .reported
-                            case "estimated": .estimated
-                            default: row.costSourceRaw == "free_mock" ? .freeMock
-                                : (row.costSourceRaw == "not_sent" ? .notSent : .unknown)
-                            },
+                            usageProvenance: usageProvenance,
                             inputTokens: row.usageSourceRaw == "unknown" ? nil : row.inputTokens,
                             outputTokens: row.usageSourceRaw == "unknown" ? nil : row.outputTokens,
                             knownCostRUB: ["calculated", "free_mock", "not_sent"].contains(row.costSourceRaw ?? "")
