@@ -59,6 +59,7 @@ actor DiagnosticsDeliveryQueue {
     }
 
     func pending() -> [PendingDiagnosticDelivery] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
         let urls = ((try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: [.contentModificationDateKey]
         )) ?? []).filter { $0.pathExtension == "pending" }
@@ -94,6 +95,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
     private let transport: any DiagnosticPacketTransport
     private let secretStore: any SecretStore
     private let deliveryQueue: DiagnosticsDeliveryQueue
+    private let now: @Sendable () -> Date
     private let randomBytes: @Sendable (Int) throws -> Data
     private let pairIDGenerator: @Sendable () -> UUID
     private var operation: Task<Void, Never>?
@@ -106,6 +108,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
         transport: any DiagnosticPacketTransport = NWTCPDiagnosticPacketTransport(),
         secretStore: any SecretStore = KeychainStore(),
         deliveryQueue: DiagnosticsDeliveryQueue = .init(),
+        now: @escaping @Sendable () -> Date = { .now },
         randomBytes: @escaping @Sendable (Int) throws -> Data = DiagnosticsDeliveryController.randomBytes,
         pairIDGenerator: @escaping @Sendable () -> UUID = UUID.init
     ) {
@@ -114,6 +117,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
         self.transport = transport
         self.secretStore = secretStore
         self.deliveryQueue = deliveryQueue
+        self.now = now
         self.randomBytes = randomBytes
         self.pairIDGenerator = pairIDGenerator
         self.state = settings.diagnosticsPairingProfile == nil ? .idle : .paired
@@ -147,7 +151,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
                 state = settings.diagnosticsPairingProfile == nil ? .idle : .paired
             }
         }
-        let invitation = try DiagnosticsPairingInvitation.parse(code)
+        let invitation = try DiagnosticsPairingInvitation.parse(code, now: now())
         let pairID = pairIDGenerator()
         let deliverySecret = try randomBytes(32)
         let payload = PairingPayload(
@@ -182,7 +186,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
             port: invitation.port,
             publicKey: invitation.publicKey,
             fingerprint: try DiagnosticEnvelopeCrypto.fingerprint(publicKey: invitation.publicKey),
-            pairedAt: .now
+            pairedAt: now()
         )
         try secretStore.save(deliverySecret.base64URLEncodedString(), account: profile.keychainAccount)
         // A QR can identify a different recipient. Pairing never inherits the
@@ -229,7 +233,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
 
     func flushQueuedWhenActive() {
         guard settings.automaticDiagnosticsDeliveryEnabled,
-              nextRetryAt.map({ $0 <= .now }) ?? true else { return }
+              nextRetryAt.map({ $0 <= now() }) ?? true else { return }
         operation?.cancel()
         operation = Task { [weak self] in await self?.flush() }
     }
@@ -267,7 +271,7 @@ final class DiagnosticsDeliveryController: ObservableObject {
             state = settings.diagnosticsPairingProfile == nil ? .idle : .paired
         } catch {
             state = .unavailable
-            nextRetryAt = .now.addingTimeInterval(60)
+            nextRetryAt = now().addingTimeInterval(60)
         }
     }
 
@@ -310,19 +314,19 @@ final class DiagnosticsDeliveryController: ObservableObject {
                 ) else { throw DiagnosticsPairingError.invalidAcknowledgement }
                 await deliveryQueue.remove(item)
                 pendingCount = await deliveryQueue.count()
-                state = .delivered(.now)
+                state = .delivered(now())
                 nextRetryAt = nil
                 recorder.record(.delivery(.deliverySucceeded))
             } catch is CancellationError {
                 return
             } catch let error as DiagnosticsPairingError {
                 state = error == .receiverRejected || error == .invalidAcknowledgement ? .rejected : .unavailable
-                nextRetryAt = .now.addingTimeInterval(60)
+                nextRetryAt = now().addingTimeInterval(60)
                 recorder.record(.delivery(.deliveryFailed, error: error == .connection ? .offline : .unknown))
                 return
             } catch {
                 state = .unavailable
-                nextRetryAt = .now.addingTimeInterval(60)
+                nextRetryAt = now().addingTimeInterval(60)
                 recorder.record(.delivery(.deliveryFailed, error: .unknown))
                 return
             }
